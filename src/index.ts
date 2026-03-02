@@ -185,21 +185,17 @@ async function runInstall() {
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   console.log("  Registered 4 hooks in ~/.claude/settings.json");
 
-  // Register MCP server — compiled binary, no env vars needed (reads ~/.betterdb/memory.json)
-  const mcpConfig = JSON.stringify({ type: "stdio", command: join(BIN_DIR, "mcp-server") });
-  const mcpResult = Bun.spawnSync(["claude", "mcp", "add-json", "betterdb-memory", mcpConfig]);
+  // Register MCP server globally (-s user) so it's available in all projects
+  const mcpBin = join(BIN_DIR, "mcp-server");
+  Bun.spawnSync(["claude", "mcp", "remove", "-s", "user", "betterdb-memory"]);
+  const mcpResult = Bun.spawnSync([
+    "claude", "mcp", "add", "-s", "user", "betterdb-memory", "--", mcpBin,
+  ]);
   if (mcpResult.exitCode === 0) {
-    console.log("  Registered MCP server: betterdb-memory");
+    console.log("  Registered MCP server: betterdb-memory (global)");
   } else {
-    // Try removing first then re-adding (in case it already exists)
-    Bun.spawnSync(["claude", "mcp", "remove", "betterdb-memory"]);
-    const retry = Bun.spawnSync(["claude", "mcp", "add-json", "betterdb-memory", mcpConfig]);
-    if (retry.exitCode === 0) {
-      console.log("  Registered MCP server: betterdb-memory (replaced existing)");
-    } else {
-      console.log("  WARNING: MCP registration failed — register manually:");
-      console.log(`    claude mcp add-json betterdb-memory '${mcpConfig}'`);
-    }
+    console.log("  WARNING: MCP registration failed — register manually:");
+    console.log(`    claude mcp add -s user betterdb-memory -- ${mcpBin}`);
   }
 
   // 5. SETUP VALKEY INDEX
@@ -285,8 +281,9 @@ async function runUninstall() {
     }
   }
 
-  // Remove MCP server
-  const mcpResult = Bun.spawnSync(["claude", "mcp", "remove", "betterdb-memory"]);
+  // Remove MCP server (try both user and local scope)
+  Bun.spawnSync(["claude", "mcp", "remove", "-s", "local", "betterdb-memory"]);
+  const mcpResult = Bun.spawnSync(["claude", "mcp", "remove", "-s", "user", "betterdb-memory"]);
   if (mcpResult.exitCode === 0) {
     console.log("  Removed MCP server: betterdb-memory");
   } else {
