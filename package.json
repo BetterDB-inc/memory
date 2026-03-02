@@ -1,6 +1,6 @@
 {
   "name": "@betterdb/memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "BetterDB Memory for Claude Code — Valkey-powered persistent memory across sessions",
   "license": "MIT",
   "author": "BetterDB Inc. <hello@betterdb.com>",
@@ -10,8 +10,13 @@
     "url": "https://github.com/BetterDB-inc/memory.git"
   },
   "keywords": [
-    "claude-code", "memory", "valkey", "mcp",
-    "ai-memory", "vector-search", "betterdb"
+    "claude-code",
+    "memory",
+    "valkey",
+    "mcp",
+    "ai-memory",
+    "vector-search",
+    "betterdb"
   ],
   "type": "module",
   "bin": {

@@ -21,6 +21,14 @@ const CONFIG_PATH = join(BETTERDB_DIR, "memory.json");
 const MANIFEST_PATH = join(BETTERDB_DIR, "install-manifest.json");
 const PKG_ROOT = resolve(import.meta.dir, "..");
 
+const BINARIES = [
+  { src: "src/hooks/session-start.ts", out: "session-start" },
+  { src: "src/hooks/session-end.ts", out: "session-end" },
+  { src: "src/hooks/pre-tool.ts", out: "pre-tool" },
+  { src: "src/hooks/post-tool.ts", out: "post-tool" },
+  { src: "src/mcp/server.ts", out: "mcp-server" },
+] as const;
+
 const USAGE = `
 BetterDB Memory for Claude Code v${VERSION}
 
@@ -75,14 +83,6 @@ switch (command) {
 // ---------------------------------------------------------------------------
 // install
 // ---------------------------------------------------------------------------
-
-const BINARIES = [
-  { src: "src/hooks/session-start.ts", out: "session-start" },
-  { src: "src/hooks/session-end.ts", out: "session-end" },
-  { src: "src/hooks/pre-tool.ts", out: "pre-tool" },
-  { src: "src/hooks/post-tool.ts", out: "post-tool" },
-  { src: "src/mcp/server.ts", out: "mcp-server" },
-] as const;
 
 async function runInstall() {
   console.log("BetterDB Memory for Claude Code — Install\n");

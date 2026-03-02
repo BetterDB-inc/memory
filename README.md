@@ -16,8 +16,7 @@ relevant history at the start of each new session.
 ### Install
 
 ```bash
-# Bun must be installed first — npx delegates to it
-npx @betterdb/memory install
+bunx @betterdb/memory install
 ```
 
 This will:
@@ -46,10 +45,10 @@ Claude can use these mid-conversation:
 ### CLI Commands
 
 ```bash
-npx @betterdb/memory install    # Set up hooks + MCP server
-npx @betterdb/memory status     # Check health
-npx @betterdb/memory uninstall  # Remove everything
-npx @betterdb/memory maintain   # Run aging/compression manually
+bunx @betterdb/memory install    # Set up hooks + MCP server
+bunx @betterdb/memory status     # Check health
+bunx @betterdb/memory uninstall  # Remove everything
+bunx @betterdb/memory maintain   # Run aging/compression manually
 ```
 
 ### Configuration
