@@ -53,16 +53,49 @@ bunx @betterdb/memory maintain   # Run aging/compression manually
 
 ### Configuration
 
-Via environment variables or `~/.betterdb/memory.json`:
+Set env vars before running `bunx @betterdb/memory install` — they get saved to `~/.betterdb/memory.json` and used by the compiled binaries at runtime.
+
+#### Core
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BETTERDB_VALKEY_URL` | `redis://localhost:6379` | Valkey connection URL |
-| `BETTERDB_EMBED_MODEL` | auto-detect | Embedding provider |
-| `BETTERDB_SUMMARIZE_MODEL` | auto-detect | Summarization provider |
+| `BETTERDB_VALKEY_INDEX_NAME` | `betterdb-memory-index` | Valkey search index name |
 | `BETTERDB_EMBED_DIM` | `1024` | Embedding dimensions |
 | `BETTERDB_MAX_CONTEXT_MEMORIES` | `5` | Memories injected per session |
 | `BETTERDB_CONTEXT_FILE` | `.betterdb_context.md` | Context injection file |
+| `BETTERDB_ALLOW_REMOTE_FALLBACK` | `true` | Fall back to remote APIs if local models unavailable |
+
+#### Model Providers
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTERDB_EMBED_PROVIDER` | auto-detect | Force embed provider: `ollama`, `voyage`, `openai`, `groq`, `together` |
+| `BETTERDB_SUMMARIZE_PROVIDER` | auto-detect | Force summarize provider: `ollama`, `anthropic`, `openai`, `groq`, `together` |
+| `BETTERDB_EMBED_MODEL` | `mxbai-embed-large` | Ollama embedding model name |
+| `BETTERDB_SUMMARIZE_MODEL` | `mistral:7b` | Ollama summarization model name |
+| `BETTERDB_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
+
+#### API Keys
+
+At least one embedding provider and one summarization provider must be available. Ollama is free and local; the others require API keys.
+
+| Variable | Provider | Used for |
+|----------|----------|----------|
+| `ANTHROPIC_API_KEY` | [Anthropic](https://console.anthropic.com/) | Summarization only (no embeddings) |
+| `VOYAGE_API_KEY` | [Voyage AI](https://www.voyageai.com/) | Embeddings only |
+| `OPENAI_API_KEY` | [OpenAI](https://platform.openai.com/) | Embeddings + summarization |
+| `GROQ_API_KEY` | [Groq](https://console.groq.com/) | Embeddings + summarization |
+| `TOGETHER_API_KEY` | [Together AI](https://www.together.ai/) | Embeddings + summarization |
+
+#### Aging Pipeline
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTERDB_DECAY_RATE` | `0.95` | Memory importance decay per day |
+| `BETTERDB_COMPRESS_THRESHOLD` | `0.3` | Importance threshold for compression |
+| `BETTERDB_DISTILL_MIN_SESSIONS` | `5` | Min sessions before knowledge distillation |
+| `BETTERDB_AGING_INTERVAL_HOURS` | `6` | Hours between automatic aging runs |
 
 ## License
 
