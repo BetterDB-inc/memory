@@ -1,0 +1,49 @@
+name: Publish BetterDB Memory
+
+on:
+  push:
+    tags:
+      - 'memory-v*'
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#memory-v}" >> $GITHUB_OUTPUT
+
+      - name: Set version
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            pkg.version = process.env.VERSION;
+            require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Validate package
+        run: bash scripts/validate-pack.sh
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
