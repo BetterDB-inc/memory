@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.betterdb_context.md
+.mcp.json
+*.log
+bun.lockb

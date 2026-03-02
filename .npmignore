@@ -1,0 +1,17 @@
+tests/
+*.test.ts
+*.spec.ts
+jest.config.*
+.eslintrc*
+.prettierrc*
+.env*
+.env.example
+.github/
+.git/
+.DS_Store
+Thumbs.db
+dist/
+*.compiled
+Dockerfile
+.dockerignore
+docker-compose*.yml
