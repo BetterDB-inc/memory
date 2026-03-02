@@ -1,0 +1,55 @@
+{
+  "name": "@betterdb/memory",
+  "version": "0.1.0",
+  "description": "BetterDB Memory for Claude Code — Valkey-powered persistent memory across sessions",
+  "license": "MIT",
+  "author": "BetterDB Inc. <hello@betterdb.com>",
+  "homepage": "https://github.com/BetterDB-inc/memory",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BetterDB-inc/memory.git"
+  },
+  "keywords": [
+    "claude-code", "memory", "valkey", "mcp",
+    "ai-memory", "vector-search", "betterdb"
+  ],
+  "type": "module",
+  "bin": {
+    "betterdb-memory": "./src/index.ts"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "README.md",
+    "LICENSE",
+    "package.json",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "test": "bun test",
+    "test:unit": "bun test tests/unit",
+    "test:integration": "bun test tests/integration",
+    "validate": "bash scripts/validate-pack.sh",
+    "prepublishOnly": "bash scripts/validate-pack.sh",
+    "setup-index": "bun run scripts/setup-index.ts",
+    "migrate-embeddings": "bun run scripts/migrate-embeddings.ts",
+    "check-providers": "bun run scripts/check-providers.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "iovalkey": "^0.2.1",
+    "ollama": "^0.5.14",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.4",
+    "zod-to-json-schema": "^3.24.5",
+    "@anthropic-ai/sdk": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.3"
+  }
+}
