@@ -15,11 +15,22 @@ relevant history at the start of each new session.
 
 ### Install
 
+#### As a Claude Code Plugin (recommended)
+
+```
+/plugin marketplace add BetterDB-inc/memory
+/plugin install betterdb-memory
+```
+
+Then run `/betterdb-memory:setup` to configure your Valkey connection and create the search index.
+
+#### Via CLI
+
 ```bash
 bunx @betterdb/memory install
 ```
 
-This will:
+The CLI install will:
 1. Compile native hook binaries to `~/.betterdb/bin/`
 2. Register 4 lifecycle hooks with Claude Code
 3. Register the MCP server for mid-conversation tools

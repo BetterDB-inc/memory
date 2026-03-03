@@ -10,7 +10,24 @@ Available MCP tools:
 - `list_open_threads` — Show unresolved items from past sessions.
 - `forget` — Delete a specific memory.
 
-## Setup
+## Installation
+
+### As a Claude Code Plugin (recommended)
+
+```
+/plugin marketplace add BetterDB-inc/memory
+/plugin install betterdb-memory
+```
+
+Then run `/betterdb-memory:setup` to configure your Valkey connection.
+
+### Via CLI
+
+```bash
+bunx @betterdb/memory install
+```
+
+## Setup (for development)
 
 ```bash
 docker compose up -d        # Start Valkey (with search module) + Ollama

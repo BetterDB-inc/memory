@@ -3,7 +3,7 @@ import { getValkeyClient } from "../client/valkey.js";
 import { createModelClient } from "../client/model.js";
 import { SessionCapture } from "../memory/capture.js";
 import { MemoryRetriever, formatForInjection } from "../memory/retrieval.js";
-import { config } from "../config.js";
+import { config, isConfigured } from "../config.js";
 
 /**
  * SessionStart hook: Retrieves relevant memories and injects context.
@@ -14,6 +14,13 @@ import { config } from "../config.js";
  * - Exit 0 for success
  */
 runHook(async () => {
+  if (!isConfigured()) {
+    process.stdout.write(
+      "[BetterDB Memory] Not configured yet. Run /betterdb-memory:setup to connect to Valkey.\n",
+    );
+    return;
+  }
+
   const payload = await readRawPayload();
   const cwd = (payload["cwd"] as string) ?? process.cwd();
 
@@ -21,7 +28,13 @@ runHook(async () => {
     process.chdir(cwd);
   }
 
-  const valkeyClient = await getValkeyClient();
+  let valkeyClient;
+  try {
+    valkeyClient = await getValkeyClient();
+  } catch {
+    return; // Valkey unreachable — skip silently
+  }
+
   const modelClient = await createModelClient();
 
   const capture = new SessionCapture();

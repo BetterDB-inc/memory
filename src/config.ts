@@ -65,3 +65,10 @@ export const config = {
 } as const;
 
 export type Config = typeof config;
+
+/** Returns true if ~/.betterdb/memory.json exists (i.e. setup has been run). */
+export function isConfigured(): boolean {
+  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
+  const p = join(home, ".betterdb", "memory.json");
+  return existsSync(p);
+}

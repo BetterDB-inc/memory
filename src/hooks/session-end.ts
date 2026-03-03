@@ -8,7 +8,7 @@ import {
   getCwdProject,
 } from "../memory/capture.js";
 import { SessionEventSchema, type EpisodicMemory } from "../memory/schema.js";
-import { config } from "../config.js";
+import { config, isConfigured } from "../config.js";
 import { unlink } from "node:fs/promises";
 
 /**
@@ -25,6 +25,7 @@ import { unlink } from "node:fs/promises";
  * 3. If model client is unavailable, queue for later processing
  */
 runHook(async () => {
+  if (!isConfigured()) return;
   const payload = await readRawPayload();
   const sessionId = payload["session_id"] as string;
   const cwd = (payload["cwd"] as string) ?? process.cwd();
@@ -77,7 +78,14 @@ runHook(async () => {
       transcript.slice(-half);
   }
 
-  const valkeyClient = await getValkeyClient();
+  let valkeyClient;
+  try {
+    valkeyClient = await getValkeyClient();
+  } catch {
+    await cleanup(eventFilePath);
+    return; // Valkey unreachable — skip silently
+  }
+
   const project = getCwdProject();
   const branch = getGitBranch();
 
