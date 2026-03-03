@@ -1,6 +1,7 @@
 import { readRawPayload, runHook } from "./_utils.js";
 import { appendFile } from "node:fs/promises";
 import type { SessionEvent } from "../memory/schema.js";
+import { isConfigured } from "../config.js";
 
 /**
  * PostToolUse hook: Records tool call results to a temp JSONL file.
@@ -13,6 +14,7 @@ import type { SessionEvent } from "../memory/schema.js";
  * The JSONL file is read by session-end.ts to build the session transcript.
  */
 runHook(async () => {
+  if (!isConfigured()) return;
   const payload = await readRawPayload();
   const sessionId = payload["session_id"] as string;
   const toolName = (payload["tool_name"] as string) ?? "unknown";

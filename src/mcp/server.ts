@@ -5,11 +5,15 @@ import { getValkeyClient } from "../client/valkey.js";
 import { createModelClient } from "../client/model.js";
 import { formatForInjection } from "../memory/retrieval.js";
 import { getCwdProject } from "../memory/capture.js";
+import { isConfigured } from "../config.js";
 import type { EpisodicMemory, KnowledgeEntry } from "../memory/schema.js";
+
+const SETUP_MESSAGE =
+  "BetterDB Memory is not configured yet. Run /betterdb-memory:setup to connect to Valkey and create the search index.";
 
 const server = new McpServer({
   name: "betterdb-memory",
-  version: "0.1.0",
+  version: "0.1.2",
 });
 
 // --- Tool: search_context ---
@@ -22,6 +26,10 @@ server.tool(
     top_k: z.number().int().min(1).max(20).optional().describe("Max results (default: 5)"),
   },
   async ({ query, top_k }) => {
+    if (!isConfigured()) {
+      return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
+    }
+
     const valkeyClient = await getValkeyClient();
     const modelClient = await createModelClient();
 
@@ -56,6 +64,10 @@ server.tool(
     project: z.string().optional().describe("Project name (auto-detected if omitted)"),
   },
   async ({ content, category, project: projectInput }) => {
+    if (!isConfigured()) {
+      return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
+    }
+
     const valkeyClient = await getValkeyClient();
     const modelClient = await createModelClient();
     const project = projectInput ?? getCwdProject();
@@ -114,6 +126,10 @@ server.tool(
     project: z.string().optional().describe("Project name (auto-detected if omitted)"),
   },
   async ({ project: projectInput }) => {
+    if (!isConfigured()) {
+      return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
+    }
+
     const valkeyClient = await getValkeyClient();
     const project = projectInput ?? getCwdProject();
 
@@ -154,6 +170,10 @@ server.tool(
     confirmed: z.boolean().optional().describe("Set to true to confirm deletion"),
   },
   async ({ memory_id, confirmed }) => {
+    if (!isConfigured()) {
+      return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
+    }
+
     const valkeyClient = await getValkeyClient();
 
     if (!confirmed) {

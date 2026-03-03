@@ -1,6 +1,6 @@
 import { readRawPayload, runHook } from "./_utils.js";
 import { getValkeyClient } from "../client/valkey.js";
-import { config } from "../config.js";
+import { config, isConfigured } from "../config.js";
 
 /**
  * PreToolUse hook: Checks for file history and appends notes to context.
@@ -11,6 +11,7 @@ import { config } from "../config.js";
  * - Exit 0 to allow, exit 2 to block
  */
 runHook(async () => {
+  if (!isConfigured()) return;
   const payload = await readRawPayload();
   const toolInput = payload["tool_input"] as Record<string, unknown> | undefined;
 

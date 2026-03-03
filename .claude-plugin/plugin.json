@@ -1,0 +1,18 @@
+{
+  "name": "betterdb-memory",
+  "version": "0.1.2",
+  "description": "Persistent semantic memory for Claude Code — powered by Valkey. After installing, run /betterdb-memory:setup to configure.",
+  "author": {
+    "name": "BetterDB Inc.",
+    "email": "hello@betterdb.com"
+  },
+  "homepage": "https://github.com/BetterDB-inc/memory",
+  "repository": "https://github.com/BetterDB-inc/memory",
+  "license": "MIT",
+  "mcpServers": {
+    "betterdb-memory": {
+      "command": "bun",
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/mcp/server.ts"]
+    }
+  }
+}

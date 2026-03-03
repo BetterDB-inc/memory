@@ -15,15 +15,38 @@ relevant history at the start of each new session.
 
 ### Install
 
+#### As a Claude Code Plugin (recommended)
+
+```
+/plugin marketplace add BetterDB-inc/memory
+/plugin install betterdb-memory
+```
+
+Then run `/betterdb-memory:setup` to configure your Valkey connection and create the search index.
+
+#### Via CLI
+
 ```bash
 bunx @betterdb/memory install
 ```
 
-This will:
+The CLI install will:
 1. Compile native hook binaries to `~/.betterdb/bin/`
 2. Register 4 lifecycle hooks with Claude Code
 3. Register the MCP server for mid-conversation tools
 4. Create the Valkey search index
+
+### Don't have Valkey?
+
+The setup skill will offer to spin one up in Docker for you. Or run it manually:
+
+```bash
+# Via CLI
+bunx @betterdb/memory docker-valkey
+
+# Or directly with Docker
+docker run -d --name betterdb-valkey -p 6379:6379 -v betterdb-valkey-data:/data valkey/valkey-search:8 valkey-server --save 60 1
+```
 
 ### How It Works
 
@@ -45,10 +68,11 @@ Claude can use these mid-conversation:
 ### CLI Commands
 
 ```bash
-bunx @betterdb/memory install    # Set up hooks + MCP server
-bunx @betterdb/memory status     # Check health
-bunx @betterdb/memory uninstall  # Remove everything
-bunx @betterdb/memory maintain   # Run aging/compression manually
+bunx @betterdb/memory install        # Set up hooks + MCP server
+bunx @betterdb/memory status         # Check health
+bunx @betterdb/memory uninstall      # Remove everything
+bunx @betterdb/memory maintain       # Run aging/compression manually
+bunx @betterdb/memory docker-valkey  # Manage Docker Valkey container
 ```
 
 ### Configuration
