@@ -1,17 +1,21 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+const CONFIG_PATH = join(
+  process.env["HOME"] ?? process.env["USERPROFILE"] ?? "",
+  ".betterdb",
+  "memory.json",
+);
+
 /**
  * Load saved config from ~/.betterdb/memory.json as fallback for env vars.
  * This allows compiled binaries (hooks, MCP server) to work without
  * requiring env vars to be set — config is saved during `install`.
  */
 const _fileConfig: Record<string, string> = (() => {
-  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
-  const p = join(home, ".betterdb", "memory.json");
-  if (!existsSync(p)) return {};
+  if (!existsSync(CONFIG_PATH)) return {};
   try {
-    const data: unknown = JSON.parse(readFileSync(p, "utf-8"));
+    const data: unknown = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
     if (typeof data !== "object" || data === null) return {};
     const result: Record<string, string> = {};
     for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
@@ -68,7 +72,5 @@ export type Config = typeof config;
 
 /** Returns true if ~/.betterdb/memory.json exists (i.e. setup has been run). */
 export function isConfigured(): boolean {
-  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
-  const p = join(home, ".betterdb", "memory.json");
-  return existsSync(p);
+  return existsSync(CONFIG_PATH);
 }
