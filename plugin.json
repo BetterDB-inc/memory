@@ -1,7 +1,7 @@
 {
   "name": "betterdb-memory",
   "version": "0.2.0",
-  "description": "Persistent semantic memory for Claude Code — powered by Valkey. After installing, run /betterdb-memory:setup to configure.",
+  "description": "Persistent semantic memory for Claude Code — powered by Valkey",
   "author": {
     "name": "BetterDB Inc.",
     "email": "hello@betterdb.com"

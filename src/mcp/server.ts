@@ -13,7 +13,7 @@ const SETUP_MESSAGE =
 
 const server = new McpServer({
   name: "betterdb-memory",
-  version: "0.1.2",
+  version: "0.2.0",
 });
 
 // --- Tool: search_context ---

@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Valkey-powered persistent semantic memory for Claude Code sessions",
-    "version": "0.1.2"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "betterdb-memory",
       "source": "./",
       "description": "Persistent semantic memory for Claude Code — powered by Valkey. After installing, run /betterdb-memory:setup to configure.",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "author": {
         "name": "BetterDB Inc.",
         "email": "hello@betterdb.com"
@@ -21,9 +21,21 @@
       "homepage": "https://github.com/BetterDB-inc/memory",
       "repository": "https://github.com/BetterDB-inc/memory",
       "license": "MIT",
-      "keywords": ["memory", "valkey", "vector-search", "mcp", "persistence", "semantic-search"],
+      "keywords": [
+        "memory",
+        "valkey",
+        "vector-search",
+        "mcp",
+        "persistence",
+        "semantic-search"
+      ],
       "category": "productivity",
-      "tags": ["memory", "context", "valkey", "ai-memory"]
+      "tags": [
+        "memory",
+        "context",
+        "valkey",
+        "ai-memory"
+      ]
     }
   ]
 }
