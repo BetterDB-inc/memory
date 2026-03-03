@@ -36,6 +36,18 @@ The CLI install will:
 3. Register the MCP server for mid-conversation tools
 4. Create the Valkey search index
 
+### Don't have Valkey?
+
+The setup skill will offer to spin one up in Docker for you. Or run it manually:
+
+```bash
+# Via CLI
+bunx @betterdb/memory docker-valkey
+
+# Or directly with Docker
+docker run -d --name betterdb-valkey -p 6379:6379 -v betterdb-valkey-data:/data valkey/valkey-search:8 valkey-server --save 60 1
+```
+
 ### How It Works
 
 | Hook | What it does |
@@ -56,10 +68,11 @@ Claude can use these mid-conversation:
 ### CLI Commands
 
 ```bash
-bunx @betterdb/memory install    # Set up hooks + MCP server
-bunx @betterdb/memory status     # Check health
-bunx @betterdb/memory uninstall  # Remove everything
-bunx @betterdb/memory maintain   # Run aging/compression manually
+bunx @betterdb/memory install        # Set up hooks + MCP server
+bunx @betterdb/memory status         # Check health
+bunx @betterdb/memory uninstall      # Remove everything
+bunx @betterdb/memory maintain       # Run aging/compression manually
+bunx @betterdb/memory docker-valkey  # Manage Docker Valkey container
 ```
 
 ### Configuration

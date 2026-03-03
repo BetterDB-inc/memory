@@ -36,11 +36,12 @@ Usage:
   betterdb-memory <command>
 
 Commands:
-  install     Compile binaries, register hooks + MCP server
-  uninstall   Remove hooks, MCP server, and compiled binaries
-  status      Check health of Valkey and model providers
-  maintain    Run aging/compression pipeline manually
-  version     Print version
+  install        Compile binaries, register hooks + MCP server
+  uninstall      Remove hooks, MCP server, and compiled binaries
+  status         Check health of Valkey and model providers
+  maintain       Run aging/compression pipeline manually
+  docker-valkey  Manage Docker Valkey container [start|stop|status|remove]
+  version        Print version
 
 Environment:
   BETTERDB_VALKEY_URL   Valkey connection (default: redis://localhost:6379)
@@ -63,6 +64,16 @@ switch (command) {
   case "maintain":
     await runMaintain();
     break;
+  case "docker-valkey": {
+    const action = process.argv[3] ?? "start";
+    const port = process.argv[4] ?? "6379";
+    const script = join(PKG_ROOT, "scripts", "docker-valkey.sh");
+    const result = Bun.spawnSync(["bash", script, port, action]);
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+    process.exit(result.exitCode);
+    break;
+  }
   case "version":
   case "--version":
   case "-v":
@@ -362,6 +373,30 @@ async function runStatus() {
     }
   } catch {
     console.log("FAILED (could not read settings)");
+  }
+
+  // Check Docker container (only if config has "docker": true)
+  const dockerFlag = readConfigValue("docker");
+  if (dockerFlag === "true") {
+    process.stdout.write("Docker container... ");
+    const script = join(PKG_ROOT, "scripts", "docker-valkey.sh");
+    if (existsSync(script)) {
+      const result = Bun.spawnSync(["bash", script, "6379", "status"]);
+      const output = result.stdout.toString().trim();
+      if (output.includes("is running")) {
+        const portMatch = output.match(/port (\d+)/);
+        console.log(`OK (betterdb-valkey, running, port ${portMatch?.[1] ?? "unknown"})`);
+      } else if (output.includes("stopped")) {
+        console.log(`STOPPED (run: bunx @betterdb/memory docker-valkey)`);
+      } else {
+        console.log(`NOT FOUND (run: bunx @betterdb/memory docker-valkey)`);
+      }
+    } else {
+      console.log("SCRIPT MISSING (docker-valkey.sh not found)");
+    }
+  } else {
+    process.stdout.write("Docker container... ");
+    console.log("NOT USED (Valkey managed externally)");
   }
 
   // Check config file
