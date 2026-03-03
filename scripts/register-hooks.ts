@@ -56,8 +56,9 @@ function cmd(hookFile: string): string {
   return `bash -c 'bun run "${join(hooksDir, hookFile)}"'`;
 }
 
-// Merge hooks — overwrites any previous BetterDB hooks
-settings["hooks"] = {
+// Merge hooks — replaces BetterDB entries per event, preserves all others
+const existingHooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
+const betterdbHooks: Record<string, unknown[]> = {
   SessionStart: [
     { hooks: [{ type: "command", command: cmd("session-start.ts") }] },
   ],
@@ -71,6 +72,16 @@ settings["hooks"] = {
     { hooks: [{ type: "command", command: cmd("session-end.ts") }] },
   ],
 };
+
+for (const [event, entries] of Object.entries(betterdbHooks)) {
+  const prev = Array.isArray(existingHooks[event]) ? existingHooks[event] : [];
+  const filtered = prev.filter((entry) => {
+    const json = JSON.stringify(entry);
+    return !json.includes("betterdb") && !json.includes(hooksDir);
+  });
+  existingHooks[event] = [...filtered, ...entries];
+}
+settings["hooks"] = existingHooks;
 
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 

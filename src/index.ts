@@ -186,12 +186,14 @@ async function runInstall() {
     }
   }
 
-  settings["hooks"] = {
+  const existingHooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
+  const betterdbHooks: Record<string, unknown[]> = {
     SessionStart: [{ hooks: [{ type: "command", command: join(BIN_DIR, "session-start") }] }],
     PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: join(BIN_DIR, "pre-tool") }] }],
     PostToolUse: [{ matcher: "", hooks: [{ type: "command", command: join(BIN_DIR, "post-tool") }] }],
     Stop: [{ hooks: [{ type: "command", command: join(BIN_DIR, "session-end") }] }],
   };
+  settings["hooks"] = mergeHooks(existingHooks, betterdbHooks);
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   console.log("  Registered 4 hooks in ~/.claude/settings.json");
@@ -452,6 +454,29 @@ function commandExists(cmd: string): boolean {
   return result.exitCode === 0;
 }
 
+/**
+ * Merge BetterDB hooks into existing settings hooks without clobbering
+ * entries from other plugins or user-defined hooks. For each event,
+ * removes any previous BetterDB entries (matched by BIN_DIR path)
+ * then appends the new ones.
+ */
+function mergeHooks(
+  existing: Record<string, unknown[]>,
+  ours: Record<string, unknown[]>,
+): Record<string, unknown[]> {
+  const merged = { ...existing };
+  for (const [event, entries] of Object.entries(ours)) {
+    const prev = Array.isArray(merged[event]) ? merged[event] : [];
+    // Filter out previous BetterDB entries (contain our BIN_DIR or betterdb path)
+    const filtered = prev.filter((entry) => {
+      const json = JSON.stringify(entry);
+      return !json.includes(BIN_DIR) && !json.includes("betterdb");
+    });
+    merged[event] = [...filtered, ...entries];
+  }
+  return merged;
+}
+
 function readConfigValue(key: string): string | undefined {
   if (!existsSync(CONFIG_PATH)) return undefined;
   try {
@@ -460,6 +485,7 @@ function readConfigValue(key: string): string | undefined {
     const val = (data as Record<string, unknown>)[key];
     if (typeof val === "string") return val;
     if (typeof val === "number") return String(val);
+    if (typeof val === "boolean") return String(val);
     return undefined;
   } catch {
     return undefined;
