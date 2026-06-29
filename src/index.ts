@@ -43,6 +43,7 @@ Commands:
   migrate          Move legacy betterdb:memory:* memories into the MemoryStore
                    (dry run; pass --apply to perform)
   ingest-claude-md Ingest a CLAUDE.md / MEMORY.md file into the store [path]
+  setup-index      Create the episodic vector index (recovery after install)
   docker-valkey    Manage Docker Valkey container [start|stop|status|remove]
   version          Print version
 
@@ -72,6 +73,9 @@ switch (command) {
     break;
   case "ingest-claude-md":
     await runIngestClaudeMd(process.argv[3]);
+    break;
+  case "setup-index":
+    await runSetupIndex();
     break;
   case "docker-valkey": {
     const action = process.argv[3] ?? "start";
@@ -456,6 +460,27 @@ async function runMaintain() {
 }
 
 // ---------------------------------------------------------------------------
+// setup-index (recovery path: build the MemoryStore episodic vector index)
+// ---------------------------------------------------------------------------
+
+async function runSetupIndex() {
+  const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
+  const { createModelClient } = await import("./client/model.js");
+
+  const client = await getValkeyClient();
+  const modelClient = await createModelClient();
+  // Record the active provider/dimension so a later provider swap is caught.
+  await client.assertEmbedDim(modelClient.embedDim, modelClient.preset.embedModel);
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  await store.ensureIndex();
+  console.log("Index ready: betterdb:mem:idx");
+
+  await store.close();
+  await client.quit();
+}
+
+// ---------------------------------------------------------------------------
 // migrate (legacy betterdb:memory:* -> MemoryStore betterdb:mem:*)
 // ---------------------------------------------------------------------------
 
@@ -489,6 +514,10 @@ async function runMigrate(apply: boolean) {
   const modelClient = await createModelClient();
   const store = await getPluginMemoryStore((t) => modelClient.embed(t));
   await store.ensureIndex();
+
+  // Baseline so we can verify the store actually grew by the migrated count,
+  // not just that its total happens to exceed it (pre-existing memories).
+  const beforeCount = (await store.listMemories()).length;
 
   let migrated = 0;
   let failed = 0;
@@ -533,12 +562,14 @@ async function runMigrate(apply: boolean) {
     console.log(`Re-pointed ${remappedKnowledge} knowledge entries to new memory ids.`);
   }
 
-  // Verify before dropping the legacy index: the new store must hold at least
-  // as many memories as we successfully migrated.
-  const newCount = (await store.listMemories()).length;
-  console.log(`\nMigrated: ${migrated}, failed: ${failed}, now in MemoryStore: ${newCount}`);
+  // Verify before dropping the legacy index: the store must have grown by the
+  // number we successfully migrated (not merely exceed it, which pre-existing
+  // memories would satisfy even if rows failed to copy).
+  const afterCount = (await store.listMemories()).length;
+  const grew = afterCount - beforeCount;
+  console.log(`\nMigrated: ${migrated}, failed: ${failed}, store grew by ${grew} (now ${afterCount}).`);
 
-  if (migrated > 0 && newCount >= migrated) {
+  if (migrated > 0 && grew >= migrated) {
     await valkeyClient.dropIndex();
     console.log("Verified — dropped the legacy index (betterdb-memory-index).");
     console.log("Legacy hashes (betterdb:memory:*) remain; delete them manually when ready.");

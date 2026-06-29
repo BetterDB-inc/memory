@@ -172,10 +172,13 @@ export class PluginMemoryStore {
    * List stored memories, optionally scoped to `project` and filtered by a
    * minimum importance. Paginates through MemoryStore.list so callers that
    * scan all memories (open-thread aggregation, distillation) get the full set.
+   * Pass `max` to stop early once that many matches are collected, so callers
+   * that only need a bounded slice don't materialize the whole store.
    */
   async listMemories(
     project?: string,
     minImportance?: number,
+    max?: number,
   ): Promise<EpisodicMemory[]> {
     const out: EpisodicMemory[] = [];
     const limit = 100;
@@ -196,6 +199,7 @@ export class PluginMemoryStore {
           continue;
         }
         out.push(memory);
+        if (max !== undefined && out.length >= max) return out;
       }
 
       offset += items.length;
