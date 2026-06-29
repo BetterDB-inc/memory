@@ -478,7 +478,8 @@ async function runMigrate(apply: boolean) {
 
   if (!apply) {
     console.log("\nDry run — re-run with --apply to migrate.");
-    console.log("Each legacy memory is re-embedded and written to betterdb:mem:*.");
+    console.log("Each legacy memory is re-embedded and written to betterdb:mem:*,");
+    console.log("and knowledge entries are re-pointed to the new memory ids.");
     console.log("The legacy index is dropped only after the new count is verified;");
     console.log("legacy hashes are left in place for you to delete once satisfied.");
     await valkeyClient.quit();
@@ -491,6 +492,10 @@ async function runMigrate(apply: boolean) {
 
   let migrated = 0;
   let failed = 0;
+  // MemoryStore.remember mints a fresh id, so track legacy -> new so we can
+  // re-point knowledge entries that reference the old episodic ids.
+  const idMap = new Map<string, string>();
+  const projects = new Set<string>();
   for (const id of legacyIds) {
     const memory = await valkeyClient.getMemory(id);
     if (!memory) {
@@ -498,7 +503,9 @@ async function runMigrate(apply: boolean) {
       continue;
     }
     try {
-      await store.storeMemory(memory);
+      const newId = await store.storeMemory(memory);
+      idMap.set(id, newId);
+      projects.add(memory.project);
       migrated++;
       if (migrated % 10 === 0) {
         console.log(`  Migrated ${migrated}/${legacyIds.length}...`);
@@ -507,6 +514,23 @@ async function runMigrate(apply: boolean) {
       console.error(`  Failed to migrate ${id}:`, err instanceof Error ? err.message : String(err));
       failed++;
     }
+  }
+
+  // Re-point distilled knowledge so sourceMemoryIds keep referencing real
+  // episodic memories under the new ids. storeKnowledge upserts by
+  // project:topic, so re-storing overwrites in place.
+  let remappedKnowledge = 0;
+  for (const project of projects) {
+    for (const entry of await valkeyClient.listKnowledge(project)) {
+      const remapped = entry.sourceMemoryIds.map((sid) => idMap.get(sid) ?? sid);
+      if (remapped.some((sid, i) => sid !== entry.sourceMemoryIds[i])) {
+        await valkeyClient.storeKnowledge({ ...entry, sourceMemoryIds: remapped });
+        remappedKnowledge++;
+      }
+    }
+  }
+  if (remappedKnowledge > 0) {
+    console.log(`Re-pointed ${remappedKnowledge} knowledge entries to new memory ids.`);
   }
 
   // Verify before dropping the legacy index: the new store must hold at least

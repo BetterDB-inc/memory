@@ -73,20 +73,8 @@ server.tool(
     const store = await getPluginMemoryStore((t) => modelClient.embed(t));
     const project = projectInput ?? getCwdProject();
 
-    // Store as KnowledgeEntry
-    const entry: KnowledgeEntry = {
-      entryId: crypto.randomUUID(),
-      project,
-      topic: category,
-      fact: content,
-      confidence: 0.9,
-      sourceMemoryIds: [],
-      lastUpdated: new Date().toISOString(),
-      accessCount: 0,
-    };
-    await valkeyClient.storeKnowledge(entry);
-
-    // Also store as EpisodicMemory for vector searchability
+    // Store as EpisodicMemory for vector searchability. MemoryStore mints the
+    // id, so capture it for the knowledge link and the user-facing response.
     const memory: EpisodicMemory = {
       memoryId: crypto.randomUUID(),
       project,
@@ -104,13 +92,26 @@ server.tool(
       accessCount: 0,
       lastAccessed: new Date().toISOString(),
     };
-    await store.storeMemory(memory);
+    const memoryId = await store.storeMemory(memory);
+
+    // Store as KnowledgeEntry, linked to the episodic memory just written.
+    const entry: KnowledgeEntry = {
+      entryId: crypto.randomUUID(),
+      project,
+      topic: category,
+      fact: content,
+      confidence: 0.9,
+      sourceMemoryIds: [memoryId],
+      lastUpdated: new Date().toISOString(),
+      accessCount: 0,
+    };
+    await valkeyClient.storeKnowledge(entry);
 
     return {
       content: [
         {
           type: "text" as const,
-          text: `Stored ${category}: "${content}" (memory: ${memory.memoryId})`,
+          text: `Stored ${category}: "${content}" (memory: ${memoryId})`,
         },
       ],
     };
