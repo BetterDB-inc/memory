@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { getValkeyClient } from "../client/valkey.js";
+import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import { formatForInjection } from "../memory/retrieval.js";
 import { getCwdProject } from "../memory/capture.js";
@@ -30,14 +31,13 @@ server.tool(
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
 
-    const valkeyClient = await getValkeyClient();
     const modelClient = await createModelClient();
+    const store = await getPluginMemoryStore((t) => modelClient.embed(t));
 
-    const embedding = await modelClient.embed(query);
     const project = getCwdProject();
     const k = top_k ?? 5;
 
-    const memories = await valkeyClient.searchMemories(embedding, project, k);
+    const memories = await store.recall(query, project, k);
     const formatted = formatForInjection(memories);
 
     return {
@@ -70,6 +70,7 @@ server.tool(
 
     const valkeyClient = await getValkeyClient();
     const modelClient = await createModelClient();
+    const store = await getPluginMemoryStore((t) => modelClient.embed(t));
     const project = projectInput ?? getCwdProject();
 
     // Store as KnowledgeEntry
@@ -86,7 +87,6 @@ server.tool(
     await valkeyClient.storeKnowledge(entry);
 
     // Also store as EpisodicMemory for vector searchability
-    const embedding = await modelClient.embed(content);
     const memory: EpisodicMemory = {
       memoryId: crypto.randomUUID(),
       project,
@@ -104,7 +104,7 @@ server.tool(
       accessCount: 0,
       lastAccessed: new Date().toISOString(),
     };
-    await valkeyClient.storeMemory(memory, embedding);
+    await store.storeMemory(memory);
 
     return {
       content: [
@@ -130,15 +130,13 @@ server.tool(
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
 
-    const valkeyClient = await getValkeyClient();
+    const store = await getPluginMemoryStore();
     const project = projectInput ?? getCwdProject();
 
-    const memoryIds = await valkeyClient.listMemoryIds(project, 0.5);
+    const memories = await store.listMemories(project, 0.5);
     const threads = new Set<string>();
 
-    for (const id of memoryIds) {
-      const memory = await valkeyClient.getMemory(id);
-      if (!memory) continue;
+    for (const memory of memories) {
       for (const thread of memory.summary.openThreads) {
         threads.add(thread);
       }
@@ -174,10 +172,10 @@ server.tool(
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
 
-    const valkeyClient = await getValkeyClient();
+    const store = await getPluginMemoryStore();
 
     if (!confirmed) {
-      const memory = await valkeyClient.getMemory(memory_id);
+      const memory = await store.getMemory(memory_id);
       if (!memory) {
         return {
           content: [
@@ -202,7 +200,7 @@ server.tool(
       };
     }
 
-    await valkeyClient.deleteMemory(memory_id);
+    await store.deleteMemory(memory_id);
 
     return {
       content: [

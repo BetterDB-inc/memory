@@ -1,199 +1,86 @@
+import type { MemoryItem } from "@betterdb/agent-memory";
 import { config } from "../config.js";
 import type { ModelClient } from "../client/model.js";
 import type { ValkeyClient } from "../client/valkey.js";
-import { SessionSummarySchema, type EpisodicMemory } from "./schema.js";
-import { computeInitialImportance, SessionCapture } from "./capture.js";
-
-// --- Cosine Similarity ---
-
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    dot += av * bv;
-    magA += av * av;
-    magB += bv * bv;
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
+import {
+  itemToEpisodic,
+  type PluginMemoryStore,
+} from "../client/memory-store.js";
+import type { EpisodicMemory } from "./schema.js";
+import { computeInitialImportance } from "./capture.js";
 
 // --- Aging Pipeline ---
+//
+// Recency decay and similarity clustering used to live here as bespoke code;
+// both are now provided by @betterdb/agent-memory's MemoryStore — composite
+// recall scoring handles recency at query time, and consolidate() merges a
+// scope's low-value memories into a single summary. What remains here is the
+// plugin-specific glue: ingest-queue processing, LLM-driven consolidation
+// summarization, and pattern distillation into KnowledgeEntries.
+//
+// Consolidation only runs when a project has at least this many low-importance
+// memories, so a lone low-value memory isn't pointlessly re-summarized (which
+// would discard its structured summary and reset its access stats).
+const CONSOLIDATE_MIN_CANDIDATES = 3;
 
 export class AgingPipeline {
   private valkeyClient: ValkeyClient;
+  private store: PluginMemoryStore;
   private modelClient: ModelClient;
 
-  constructor(valkeyClient: ValkeyClient, modelClient: ModelClient) {
+  constructor(
+    valkeyClient: ValkeyClient,
+    store: PluginMemoryStore,
+    modelClient: ModelClient,
+  ) {
     this.valkeyClient = valkeyClient;
+    this.store = store;
     this.modelClient = modelClient;
   }
 
-  // --- Decay ---
+  // --- Consolidation ---
 
-  async runDecay(
-    project?: string,
-  ): Promise<{ processed: number; flagged: number }> {
-    const memoryIds = await this.valkeyClient.listMemoryIds(project);
-    let processed = 0;
-    let flagged = 0;
+  async runConsolidation(
+    project: string,
+  ): Promise<{ consolidated: number; created: number; deleted: number }> {
+    const threshold = config.memory.compressThreshold;
+    const candidates = (await this.store.listMemories(project)).filter(
+      (m) => m.importanceScore <= threshold,
+    );
 
-    for (const id of memoryIds) {
-      const memory = await this.valkeyClient.getMemory(id);
-      if (!memory) continue;
-
-      const daysSince =
-        (Date.now() - new Date(memory.lastAccessed).getTime()) /
-        (1000 * 60 * 60 * 24);
-      const newScore =
-        memory.importanceScore *
-        Math.pow(config.memory.decayRate, daysSince);
-
-      await this.valkeyClient.updateImportance(id, newScore);
-      processed++;
-
-      if (newScore < config.memory.compressThreshold) {
-        await this.valkeyClient.pushCompressQueue(id);
-        flagged++;
-      }
+    if (candidates.length < CONSOLIDATE_MIN_CANDIDATES) {
+      return { consolidated: 0, created: 0, deleted: 0 };
     }
 
-    return { processed, flagged };
+    const result = await this.store.consolidate({
+      namespace: project,
+      maxImportance: threshold,
+      summaryImportance: threshold,
+      summarize: (items) => this.summarizeCluster(items),
+    });
+
+    return {
+      consolidated: result.consolidated,
+      created: result.created.length,
+      deleted: result.deleted,
+    };
   }
 
-  // --- Compression ---
-
-  async runCompression(): Promise<{ merged: number; deleted: number }> {
-    const ids = await this.valkeyClient.popCompressQueue(50);
-    if (ids.length === 0) return { merged: 0, deleted: 0 };
-
-    // Fetch memories with embeddings
-    const entries: Array<{
-      memory: EpisodicMemory;
-      embedding: number[];
-    }> = [];
-
-    for (const id of ids) {
-      const memory = await this.valkeyClient.getMemory(id);
-      const embedding = await this.valkeyClient.getMemoryEmbedding(id);
-      if (memory && embedding) {
-        entries.push({ memory, embedding });
-      }
-    }
-
-    // Group by project
-    const byProject = new Map<
-      string,
-      Array<{ memory: EpisodicMemory; embedding: number[] }>
-    >();
-    for (const entry of entries) {
-      const group = byProject.get(entry.memory.project) ?? [];
-      group.push(entry);
-      byProject.set(entry.memory.project, group);
-    }
-
-    let merged = 0;
-    let deleted = 0;
-
-    for (const [, group] of byProject) {
-      // Batch size guard: only process 100 lowest-importance per project
-      const sorted = group
-        .sort((a, b) => a.memory.importanceScore - b.memory.importanceScore)
-        .slice(0, 100);
-
-      if (sorted.length < group.length) {
-        console.error(
-          `[betterdb] Project group exceeds 100 memories, processing only lowest-importance 100. Additional runs needed.`,
+  private async summarizeCluster(items: MemoryItem[]): Promise<string> {
+    const transcript = items
+      .map((item) => {
+        const memory = itemToEpisodic(item);
+        if (!memory) return item.content;
+        return (
+          `Session: ${memory.summary.oneLineSummary}\n` +
+          `Decisions: ${memory.summary.decisions.join("; ")}\n` +
+          `Patterns: ${memory.summary.patterns.join("; ")}`
         );
-      }
+      })
+      .join("\n\n");
 
-      // Find clusters of similar memories
-      const used = new Set<number>();
-      const clusters: Array<
-        Array<{ memory: EpisodicMemory; embedding: number[] }>
-      > = [];
-
-      for (let i = 0; i < sorted.length; i++) {
-        if (used.has(i)) continue;
-        const cluster = [sorted[i]!];
-        used.add(i);
-
-        for (let j = i + 1; j < sorted.length; j++) {
-          if (used.has(j)) continue;
-          // Check if similar to all cluster members
-          const similar = cluster.every(
-            (c) =>
-              cosineSimilarity(c.embedding, sorted[j]!.embedding) > 0.85,
-          );
-          if (similar) {
-            cluster.push(sorted[j]!);
-            used.add(j);
-          }
-        }
-
-        clusters.push(cluster);
-      }
-
-      // Process clusters
-      for (const cluster of clusters) {
-        if (cluster.length >= 3) {
-          // Merge cluster into a single memory
-          const combinedTranscript = cluster
-            .map(
-              (c) =>
-                `Session ${c.memory.memoryId}: ${c.memory.summary.oneLineSummary}\n` +
-                `Decisions: ${c.memory.summary.decisions.join("; ")}\n` +
-                `Patterns: ${c.memory.summary.patterns.join("; ")}`,
-            )
-            .join("\n\n");
-
-          const mergedSummary =
-            await this.modelClient.summarize(combinedTranscript);
-          const mergedEmbedding = await this.modelClient.embed(
-            mergedSummary.oneLineSummary,
-          );
-
-          const avgImportance =
-            cluster.reduce((sum, c) => sum + c.memory.importanceScore, 0) /
-            cluster.length;
-
-          const newMemory: EpisodicMemory = {
-            memoryId: crypto.randomUUID(),
-            project: cluster[0]!.memory.project,
-            branch: cluster[0]!.memory.branch,
-            timestamp: new Date().toISOString(),
-            summary: mergedSummary,
-            importanceScore: avgImportance,
-            accessCount: 0,
-            lastAccessed: new Date().toISOString(),
-          };
-
-          await this.valkeyClient.storeMemory(newMemory, mergedEmbedding);
-
-          // Delete originals
-          for (const c of cluster) {
-            await this.valkeyClient.deleteMemory(c.memory.memoryId);
-          }
-
-          merged += cluster.length;
-        } else if (cluster.length === 1) {
-          const m = cluster[0]!.memory;
-          const daysSince =
-            (Date.now() - new Date(m.lastAccessed).getTime()) /
-            (1000 * 60 * 60 * 24);
-
-          if (m.importanceScore < 0.05 && daysSince > 90) {
-            await this.valkeyClient.deleteMemory(m.memoryId);
-            deleted++;
-          }
-        }
-      }
-    }
-
-    return { merged, deleted };
+    const summary = await this.modelClient.summarize(transcript);
+    return summary.oneLineSummary;
   }
 
   // --- Distillation ---
@@ -201,13 +88,7 @@ export class AgingPipeline {
   async runDistillation(
     project: string,
   ): Promise<{ distilled: number }> {
-    const memoryIds = await this.valkeyClient.listMemoryIds(project, 0.5);
-    const memories: EpisodicMemory[] = [];
-
-    for (const id of memoryIds) {
-      const memory = await this.valkeyClient.getMemory(id);
-      if (memory) memories.push(memory);
-    }
+    const memories = await this.store.listMemories(project, 0.5);
 
     if (memories.length < config.memory.distillMinSessions) {
       return { distilled: 0 };
@@ -259,9 +140,6 @@ export class AgingPipeline {
     for (const item of items) {
       try {
         const summary = await this.modelClient.summarize(item.transcript);
-        const embedding = await this.modelClient.embed(
-          summary.oneLineSummary,
-        );
         const importance = computeInitialImportance(summary);
 
         const meta = item.meta as Record<string, string>;
@@ -276,7 +154,7 @@ export class AgingPipeline {
           lastAccessed: new Date().toISOString(),
         };
 
-        await this.valkeyClient.storeMemory(memory, embedding);
+        await this.store.storeMemory(memory);
         processed++;
       } catch (err) {
         console.error("[betterdb] Failed to process queued transcript:", err);
@@ -300,22 +178,26 @@ export class AgingPipeline {
     const { processed: ingested } = await this.processIngestQueue();
     console.error(`[betterdb] Ingest queue: processed ${ingested} items`);
 
-    const { processed, flagged } = await this.runDecay(project);
-    console.error(
-      `[betterdb] Decay: processed ${processed}, flagged ${flagged} for compression`,
-    );
+    const projects = project
+      ? [project]
+      : await this.allProjects();
 
-    const { merged, deleted } = await this.runCompression();
-    console.error(
-      `[betterdb] Compression: merged ${merged}, deleted ${deleted}`,
-    );
+    for (const p of projects) {
+      const { consolidated, created, deleted } = await this.runConsolidation(p);
+      console.error(
+        `[betterdb] Consolidation (${p}): merged ${consolidated} into ${created}, deleted ${deleted}`,
+      );
 
-    if (project) {
-      const { distilled } = await this.runDistillation(project);
-      console.error(`[betterdb] Distillation: distilled ${distilled} entries`);
+      const { distilled } = await this.runDistillation(p);
+      console.error(`[betterdb] Distillation (${p}): distilled ${distilled} entries`);
     }
 
     await this.valkeyClient.setLastAgingRun(new Date());
     console.error("[betterdb] Aging pipeline complete.");
+  }
+
+  private async allProjects(): Promise<string[]> {
+    const memories = await this.store.listMemories();
+    return [...new Set(memories.map((m) => m.project))];
   }
 }

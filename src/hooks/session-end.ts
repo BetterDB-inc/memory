@@ -1,5 +1,6 @@
 import { readRawPayload, runHook } from "./_utils.js";
 import { getValkeyClient } from "../client/valkey.js";
+import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import {
   SessionCapture,
@@ -110,7 +111,6 @@ runHook(async () => {
 
   const summary = await modelClient.summarize(transcript);
   const importance = computeInitialImportance(summary);
-  const embedding = await modelClient.embed(summary.oneLineSummary);
 
   const memory: EpisodicMemory = {
     memoryId: crypto.randomUUID(),
@@ -123,7 +123,9 @@ runHook(async () => {
     lastAccessed: new Date().toISOString(),
   };
 
-  await valkeyClient.storeMemory(memory, embedding);
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  await store.storeMemory(memory);
+  await store.close();
   await valkeyClient.quit();
   await cleanup(eventFilePath);
 });

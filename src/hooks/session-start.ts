@@ -1,8 +1,8 @@
 import { readRawPayload, runHook } from "./_utils.js";
-import { getValkeyClient } from "../client/valkey.js";
+import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import { SessionCapture } from "../memory/capture.js";
-import { MemoryRetriever, formatForInjection } from "../memory/retrieval.js";
+import { formatForInjection } from "../memory/retrieval.js";
 import { config, isConfigured } from "../config.js";
 
 /**
@@ -28,21 +28,24 @@ runHook(async () => {
     process.chdir(cwd);
   }
 
-  let valkeyClient;
+  const modelClient = await createModelClient();
+
+  let store;
   try {
-    valkeyClient = await getValkeyClient();
+    store = await getPluginMemoryStore((t) => modelClient.embed(t));
   } catch {
     return; // Valkey unreachable — skip silently
   }
 
-  const modelClient = await createModelClient();
-
   const capture = new SessionCapture();
   const queryContext = await capture.getQueryContext();
 
-  const retriever = new MemoryRetriever(valkeyClient, modelClient);
   const project = queryContext.split("\n")[0]?.replace("Project: ", "") ?? "unknown";
-  const memories = await retriever.retrieve(queryContext, project);
+  const memories = await store.recall(
+    queryContext,
+    project,
+    config.memory.maxContextMemories,
+  );
 
   if (memories.length > 0) {
     const formatted = formatForInjection(memories);
@@ -52,5 +55,5 @@ runHook(async () => {
     process.stdout.write(formatted);
   }
 
-  await valkeyClient.quit();
+  await store.close();
 });
