@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { getValkeyClient } from "../client/valkey.js";
+import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import { formatForInjection } from "../memory/retrieval.js";
 import { getCwdProject } from "../memory/capture.js";
@@ -30,14 +31,13 @@ server.tool(
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
 
-    const valkeyClient = await getValkeyClient();
     const modelClient = await createModelClient();
+    const store = await getPluginMemoryStore((t) => modelClient.embed(t));
 
-    const embedding = await modelClient.embed(query);
     const project = getCwdProject();
     const k = top_k ?? 5;
 
-    const memories = await valkeyClient.searchMemories(embedding, project, k);
+    const memories = await store.recall(query, project, k);
     const formatted = formatForInjection(memories);
 
     return {
@@ -70,23 +70,11 @@ server.tool(
 
     const valkeyClient = await getValkeyClient();
     const modelClient = await createModelClient();
+    const store = await getPluginMemoryStore((t) => modelClient.embed(t));
     const project = projectInput ?? getCwdProject();
 
-    // Store as KnowledgeEntry
-    const entry: KnowledgeEntry = {
-      entryId: crypto.randomUUID(),
-      project,
-      topic: category,
-      fact: content,
-      confidence: 0.9,
-      sourceMemoryIds: [],
-      lastUpdated: new Date().toISOString(),
-      accessCount: 0,
-    };
-    await valkeyClient.storeKnowledge(entry);
-
-    // Also store as EpisodicMemory for vector searchability
-    const embedding = await modelClient.embed(content);
+    // Store as EpisodicMemory for vector searchability. MemoryStore mints the
+    // id, so capture it for the knowledge link and the user-facing response.
     const memory: EpisodicMemory = {
       memoryId: crypto.randomUUID(),
       project,
@@ -104,13 +92,26 @@ server.tool(
       accessCount: 0,
       lastAccessed: new Date().toISOString(),
     };
-    await valkeyClient.storeMemory(memory, embedding);
+    const memoryId = await store.storeMemory(memory);
+
+    // Store as KnowledgeEntry, linked to the episodic memory just written.
+    const entry: KnowledgeEntry = {
+      entryId: crypto.randomUUID(),
+      project,
+      topic: category,
+      fact: content,
+      confidence: 0.9,
+      sourceMemoryIds: [memoryId],
+      lastUpdated: new Date().toISOString(),
+      accessCount: 0,
+    };
+    await valkeyClient.storeKnowledge(entry);
 
     return {
       content: [
         {
           type: "text" as const,
-          text: `Stored ${category}: "${content}" (memory: ${memory.memoryId})`,
+          text: `Stored ${category}: "${content}" (memory: ${memoryId})`,
         },
       ],
     };
@@ -130,15 +131,13 @@ server.tool(
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
 
-    const valkeyClient = await getValkeyClient();
+    const store = await getPluginMemoryStore();
     const project = projectInput ?? getCwdProject();
 
-    const memoryIds = await valkeyClient.listMemoryIds(project, 0.5);
+    const memories = await store.listMemories(project, 0.5);
     const threads = new Set<string>();
 
-    for (const id of memoryIds) {
-      const memory = await valkeyClient.getMemory(id);
-      if (!memory) continue;
+    for (const memory of memories) {
       for (const thread of memory.summary.openThreads) {
         threads.add(thread);
       }
@@ -174,10 +173,10 @@ server.tool(
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
 
-    const valkeyClient = await getValkeyClient();
+    const store = await getPluginMemoryStore();
 
     if (!confirmed) {
-      const memory = await valkeyClient.getMemory(memory_id);
+      const memory = await store.getMemory(memory_id);
       if (!memory) {
         return {
           content: [
@@ -202,7 +201,7 @@ server.tool(
       };
     }
 
-    await valkeyClient.deleteMemory(memory_id);
+    await store.deleteMemory(memory_id);
 
     return {
       content: [

@@ -7,16 +7,19 @@
  *   bun run scripts/aging-worker.ts
  */
 import { getValkeyClient } from "../src/client/valkey.js";
+import { getPluginMemoryStore } from "../src/client/memory-store.js";
 import { createModelClient } from "../src/client/model.js";
 import { AgingPipeline } from "../src/memory/aging.js";
 
 try {
   const valkeyClient = await getValkeyClient();
   const modelClient = await createModelClient();
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
 
-  const pipeline = new AgingPipeline(valkeyClient, modelClient);
+  const pipeline = new AgingPipeline(valkeyClient, store, modelClient);
   await pipeline.runFullPipeline();
 
+  await store.close();
   await valkeyClient.quit();
 } catch (err) {
   console.error("[betterdb] Aging worker failed:", err);

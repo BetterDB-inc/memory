@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const HOME = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
 const BETTERDB_DIR = join(HOME, ".betterdb");
 const BIN_DIR = join(BETTERDB_DIR, "bin");
@@ -36,12 +36,16 @@ Usage:
   betterdb-memory <command>
 
 Commands:
-  install        Compile binaries, register hooks + MCP server
-  uninstall      Remove hooks, MCP server, and compiled binaries
-  status         Check health of Valkey and model providers
-  maintain       Run aging/compression pipeline manually
-  docker-valkey  Manage Docker Valkey container [start|stop|status|remove]
-  version        Print version
+  install          Compile binaries, register hooks + MCP server
+  uninstall        Remove hooks, MCP server, and compiled binaries
+  status           Check health of Valkey and model providers
+  maintain         Run aging/consolidation pipeline manually
+  migrate          Move legacy betterdb:memory:* memories into the MemoryStore
+                   (dry run; pass --apply to perform)
+  ingest-claude-md Ingest a CLAUDE.md / MEMORY.md file into the store [path]
+  setup-index      Create the episodic vector index (recovery after install)
+  docker-valkey    Manage Docker Valkey container [start|stop|status|remove]
+  version          Print version
 
 Environment:
   BETTERDB_VALKEY_URL   Valkey connection (default: redis://localhost:6379)
@@ -63,6 +67,15 @@ switch (command) {
     break;
   case "maintain":
     await runMaintain();
+    break;
+  case "migrate":
+    await runMigrate(process.argv.includes("--apply"));
+    break;
+  case "ingest-claude-md":
+    await runIngestClaudeMd(process.argv[3]);
+    break;
+  case "setup-index":
+    await runSetupIndex();
     break;
   case "docker-valkey": {
     const action = process.argv[3] ?? "start";
@@ -215,10 +228,16 @@ async function runInstall() {
   console.log("\nSetting up Valkey index...");
   try {
     const { getValkeyClient } = await import("./client/valkey.js");
-    const embedDim = Number(Bun.env["BETTERDB_EMBED_DIM"] ?? readConfigValue("BETTERDB_EMBED_DIM") ?? "1024");
+    const { getPluginMemoryStore } = await import("./client/memory-store.js");
+    const { createModelClient } = await import("./client/model.js");
     const client = await getValkeyClient();
-    await client.ensureIndex(embedDim);
+    const modelClient = await createModelClient();
+    // Record the active provider/dimension so a later provider swap is caught.
+    await client.assertEmbedDim(modelClient.embedDim, modelClient.preset.embedModel);
+    const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+    await store.ensureIndex();
     console.log("  Valkey index ready");
+    await store.close();
     await client.quit();
   } catch (err) {
     console.log(`  WARNING: Index setup failed (${err instanceof Error ? err.message : String(err)})`);
@@ -331,9 +350,12 @@ async function runStatus() {
   try {
     const { config } = await import("./config.js");
     const { getValkeyClient } = await import("./client/valkey.js");
+    const { getPluginMemoryStore } = await import("./client/memory-store.js");
     const client = await getValkeyClient();
-    const memoryIds = await client.listMemoryIds();
-    console.log(`OK (${memoryIds.length} memories, ${config.valkey.url})`);
+    const store = await getPluginMemoryStore();
+    const memories = await store.listMemories();
+    console.log(`OK (${memories.length} memories, ${config.valkey.url})`);
+    await store.close();
     await client.quit();
   } catch (err) {
     console.log(`FAILED (${err instanceof Error ? err.message : String(err)})`);
@@ -418,30 +440,223 @@ async function runMaintain() {
   console.log("BetterDB Memory for Claude Code — Maintenance\n");
 
   const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
   const { createModelClient } = await import("./client/model.js");
   const { AgingPipeline } = await import("./memory/aging.js");
 
   const valkeyClient = await getValkeyClient();
   const modelClient = await createModelClient();
-  const pipeline = new AgingPipeline(valkeyClient, modelClient);
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  const pipeline = new AgingPipeline(valkeyClient, store, modelClient);
 
-  const memoryIds = await valkeyClient.listMemoryIds();
-  console.log(`Total memories: ${memoryIds.length}`);
+  const memories = await store.listMemories();
+  console.log(`Total memories: ${memories.length}`);
 
-  // Group by project
-  const projects = new Set<string>();
-  for (const id of memoryIds) {
-    const memory = await valkeyClient.getMemory(id);
-    if (memory) projects.add(memory.project);
-  }
+  await pipeline.runFullPipeline();
 
-  for (const project of projects) {
-    console.log(`\nRunning decay for project: ${project}`);
-    await pipeline.runDecay(project);
-  }
-
-  await valkeyClient.setLastAgingRun(new Date());
   console.log("\nAging pipeline complete.");
+  await store.close();
+  await valkeyClient.quit();
+}
+
+// ---------------------------------------------------------------------------
+// setup-index (recovery path: build the MemoryStore episodic vector index)
+// ---------------------------------------------------------------------------
+
+async function runSetupIndex() {
+  const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
+  const { createModelClient } = await import("./client/model.js");
+
+  const client = await getValkeyClient();
+  const modelClient = await createModelClient();
+  // Record the active provider/dimension so a later provider swap is caught.
+  await client.assertEmbedDim(modelClient.embedDim, modelClient.preset.embedModel);
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  await store.ensureIndex();
+  console.log("Index ready: betterdb:mem:idx");
+
+  await store.close();
+  await client.quit();
+}
+
+// ---------------------------------------------------------------------------
+// migrate (legacy betterdb:memory:* -> MemoryStore betterdb:mem:*)
+// ---------------------------------------------------------------------------
+
+async function runMigrate(apply: boolean) {
+  console.log("BetterDB Memory for Claude Code — Migrate legacy memories\n");
+
+  const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
+  const { createModelClient } = await import("./client/model.js");
+
+  const valkeyClient = await getValkeyClient();
+  const legacyIds = await valkeyClient.listMemoryIds();
+  console.log(`Found ${legacyIds.length} legacy memories under betterdb:memory:*`);
+
+  if (legacyIds.length === 0) {
+    console.log("Nothing to migrate.");
+    await valkeyClient.quit();
+    return;
+  }
+
+  if (!apply) {
+    console.log("\nDry run — re-run with --apply to migrate.");
+    console.log("Each legacy memory is re-embedded and written to betterdb:mem:*,");
+    console.log("and knowledge entries are re-pointed to the new memory ids.");
+    console.log("The legacy index is dropped only after the new count is verified;");
+    console.log("legacy hashes are left in place for you to delete once satisfied.");
+    await valkeyClient.quit();
+    return;
+  }
+
+  const modelClient = await createModelClient();
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  await store.ensureIndex();
+
+  // Baseline so we can verify the store actually grew by the migrated count,
+  // not just that its total happens to exceed it (pre-existing memories).
+  const beforeCount = (await store.listMemories()).length;
+
+  let migrated = 0;
+  let failed = 0;
+  // MemoryStore.remember mints a fresh id, so track legacy -> new so we can
+  // re-point knowledge entries that reference the old episodic ids.
+  const idMap = new Map<string, string>();
+  const projects = new Set<string>();
+  for (const id of legacyIds) {
+    const memory = await valkeyClient.getMemory(id);
+    if (!memory) {
+      failed++;
+      continue;
+    }
+    try {
+      const newId = await store.storeMemory(memory);
+      idMap.set(id, newId);
+      projects.add(memory.project);
+      migrated++;
+      if (migrated % 10 === 0) {
+        console.log(`  Migrated ${migrated}/${legacyIds.length}...`);
+      }
+    } catch (err) {
+      console.error(`  Failed to migrate ${id}:`, err instanceof Error ? err.message : String(err));
+      failed++;
+    }
+  }
+
+  // Re-point distilled knowledge so sourceMemoryIds keep referencing real
+  // episodic memories under the new ids. storeKnowledge upserts by
+  // project:topic, so re-storing overwrites in place.
+  let remappedKnowledge = 0;
+  for (const project of projects) {
+    for (const entry of await valkeyClient.listKnowledge(project)) {
+      const remapped = entry.sourceMemoryIds.map((sid) => idMap.get(sid) ?? sid);
+      if (remapped.some((sid, i) => sid !== entry.sourceMemoryIds[i])) {
+        await valkeyClient.storeKnowledge({ ...entry, sourceMemoryIds: remapped });
+        remappedKnowledge++;
+      }
+    }
+  }
+  if (remappedKnowledge > 0) {
+    console.log(`Re-pointed ${remappedKnowledge} knowledge entries to new memory ids.`);
+  }
+
+  // Verify before dropping the legacy index: the store must have grown by the
+  // number we successfully migrated (not merely exceed it, which pre-existing
+  // memories would satisfy even if rows failed to copy).
+  const afterCount = (await store.listMemories()).length;
+  const grew = afterCount - beforeCount;
+  console.log(`\nMigrated: ${migrated}, failed: ${failed}, store grew by ${grew} (now ${afterCount}).`);
+
+  if (migrated > 0 && grew >= migrated) {
+    await valkeyClient.dropIndex();
+    console.log("Verified — dropped the legacy index (betterdb-memory-index).");
+    console.log("Legacy hashes (betterdb:memory:*) remain; delete them manually when ready.");
+  } else {
+    console.log("Count mismatch — left the legacy index in place. Re-run after investigating.");
+  }
+
+  await store.close();
+  await valkeyClient.quit();
+}
+
+// ---------------------------------------------------------------------------
+// ingest-claude-md (ingest a CLAUDE.md / MEMORY.md file into the store)
+// ---------------------------------------------------------------------------
+
+async function runIngestClaudeMd(pathArg?: string) {
+  console.log("BetterDB Memory for Claude Code — Ingest markdown memory file\n");
+
+  const candidates = pathArg
+    ? [pathArg]
+    : [
+        join(process.cwd(), "CLAUDE.md"),
+        join(process.cwd(), "MEMORY.md"),
+        join(HOME, ".claude", "CLAUDE.md"),
+      ];
+
+  const filePath = candidates.find((p) => existsSync(p));
+  if (!filePath) {
+    console.error(`No memory file found. Looked in:\n  ${candidates.join("\n  ")}`);
+    process.exit(1);
+  }
+  console.log(`Reading ${filePath}`);
+
+  const content = readFileSync(filePath, "utf-8");
+  // Split into paragraph-sized chunks on blank lines so each becomes an
+  // independently recallable memory; cap length to keep embeddings sane.
+  const MAX_CHUNK = 480;
+  const chunks = content
+    .split(/\n\s*\n/)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0)
+    .map((c) => (c.length > MAX_CHUNK ? c.slice(0, MAX_CHUNK) : c));
+
+  if (chunks.length === 0) {
+    console.log("File is empty — nothing to ingest.");
+    process.exit(0);
+  }
+
+  const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
+  const { createModelClient } = await import("./client/model.js");
+  const { getCwdProject } = await import("./memory/capture.js");
+  const { SessionSummarySchema } = await import("./memory/schema.js");
+
+  const valkeyClient = await getValkeyClient();
+  const modelClient = await createModelClient();
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  await store.ensureIndex();
+
+  const project = getCwdProject();
+  const timestamp = new Date().toISOString();
+  let stored = 0;
+
+  for (const chunk of chunks) {
+    const summary = SessionSummarySchema.parse({
+      decisions: [],
+      patterns: [],
+      problemsSolved: [],
+      openThreads: [],
+      filesChanged: [],
+      oneLineSummary: chunk,
+    });
+    await store.storeMemory({
+      memoryId: crypto.randomUUID(),
+      project,
+      branch: "claude-md",
+      timestamp,
+      summary,
+      importanceScore: 0.6,
+      accessCount: 0,
+      lastAccessed: timestamp,
+    });
+    stored++;
+  }
+
+  console.log(`\nIngested ${stored} chunks from ${filePath} into project "${project}".`);
+  await store.close();
   await valkeyClient.quit();
 }
 

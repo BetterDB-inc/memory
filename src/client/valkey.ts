@@ -31,6 +31,15 @@ export class ValkeyClient {
     this.client = client;
   }
 
+  /**
+   * The underlying iovalkey connection. Exposed so the episodic-vector path
+   * (PluginMemoryStore) can share this single connection instead of opening a
+   * second one — its `.call()` satisfies MemoryStoreClient.
+   */
+  get redis(): Redis {
+    return this.client;
+  }
+
   // --- Index Management ---
 
   async assertEmbedDim(expectedDim: number, providerLabel?: string): Promise<void> {

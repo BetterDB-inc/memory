@@ -1,5 +1,6 @@
 import { readRawPayload, runHook } from "./_utils.js";
-import { getValkeyClient } from "../client/valkey.js";
+import { getPluginMemoryStore } from "../client/memory-store.js";
+import { getCwdProject } from "../memory/capture.js";
 import { config, isConfigured } from "../config.js";
 
 /**
@@ -23,21 +24,20 @@ runHook(async () => {
 
   if (!filePath) return;
 
-  let valkeyClient;
+  let store;
   try {
-    valkeyClient = await getValkeyClient();
+    store = await getPluginMemoryStore();
   } catch {
     return; // Valkey unavailable — skip silently
   }
 
-  // Scan for memories that reference this file
-  const memoryIds = await valkeyClient.listMemoryIds();
+  // Scan the current project's recent memories for ones that reference this
+  // file. Scope to the project and cap at 50 so this stays cheap on every tool
+  // call instead of materializing the whole store.
+  const memories = await store.listMemories(getCwdProject(), undefined, 50);
   const relevantNotes: string[] = [];
 
-  for (const id of memoryIds.slice(0, 50)) {
-    const memory = await valkeyClient.getMemory(id);
-    if (!memory) continue;
-
+  for (const memory of memories) {
     if (memory.summary.filesChanged.some((f) => f.includes(filePath) || filePath.includes(f))) {
       relevantNotes.push(
         `- ${memory.summary.oneLineSummary} (${memory.timestamp.split("T")[0]})`,
@@ -56,5 +56,5 @@ runHook(async () => {
     await Bun.write(config.memory.contextFile, existing + note);
   }
 
-  await valkeyClient.quit();
+  await store.close();
 });
