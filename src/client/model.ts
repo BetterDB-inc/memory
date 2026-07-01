@@ -74,6 +74,7 @@ export { AnthropicSummarizeClient } from "./providers/anthropic.js";
 export { VoyageEmbedClient } from "./providers/voyage.js";
 export { GroqEmbedClient, GroqSummarizeClient } from "./providers/groq.js";
 export { TogetherEmbedClient, TogetherSummarizeClient } from "./providers/together.js";
+export { LocalEmbedClient } from "./providers/local.js";
 export { buildSummarizePrompt } from "./providers/_prompt.js";
 
 // --- Provider Detection ---
@@ -146,15 +147,10 @@ async function resolveEmbedProvider(
     return new TogetherEmbedClient(p.togetherKey);
   }
 
-  throw new Error(
-    `No embedding provider available. Options:\n` +
-      `  1. Install Ollama and run: ollama pull mxbai-embed-large\n` +
-      `  2. Set VOYAGE_API_KEY for Voyage AI (voyage-3, dim=1024)\n` +
-      `  3. Set OPENAI_API_KEY for OpenAI (text-embedding-3-small, dim=1536)\n` +
-      `  4. Set GROQ_API_KEY for Groq (nomic-embed-text-v1_5, dim=768)\n` +
-      `  5. Set TOGETHER_API_KEY for Together AI (m2-bert-80M-8k-retrieval, dim=768)\n\n` +
-      `Note: ANTHROPIC_API_KEY does not provide embeddings — pair it with another embed provider.`,
-  );
+  // On-device fallback: zero-config, no API key, no service. Ensures a fresh
+  // install produces embeddings even with nothing else installed.
+  const { LocalEmbedClient } = await import("./providers/local.js");
+  return new LocalEmbedClient();
 }
 
 async function resolveSummarizeProvider(
@@ -217,6 +213,10 @@ function createExplicitEmbedProvider(
   p: typeof config.providers,
 ): ModelClient {
   switch (name) {
+    case "local": {
+      const { LocalEmbedClient } = require("./providers/local.js");
+      return new LocalEmbedClient();
+    }
     case "ollama": {
       const { OllamaModelClient } = require("./providers/ollama.js");
       return new OllamaModelClient(PRESET_CLEAN, config.ollama.url);
@@ -242,7 +242,7 @@ function createExplicitEmbedProvider(
       return new TogetherEmbedClient(p.togetherKey);
     }
     default:
-      throw new Error(`Unknown embed provider: ${name}. Valid: ollama, openai, voyage, groq, together`);
+      throw new Error(`Unknown embed provider: ${name}. Valid: local, ollama, openai, voyage, groq, together`);
   }
 }
 

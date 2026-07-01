@@ -88,15 +88,19 @@ Copy `.env.example` to `.env` and fill in your values before running `bunx @bett
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BETTERDB_EMBED_PROVIDER` | auto-detect | Force embed provider: `ollama`, `voyage`, `openai`, `groq`, `together` |
+| `BETTERDB_EMBED_PROVIDER` | auto-detect | Force embed provider: `local`, `ollama`, `voyage`, `openai`, `groq`, `together` |
 | `BETTERDB_SUMMARIZE_PROVIDER` | auto-detect | Force summarize provider: `ollama`, `anthropic`, `openai`, `groq`, `together` |
 | `BETTERDB_EMBED_MODEL` | `mxbai-embed-large` | Ollama embedding model name |
 | `BETTERDB_SUMMARIZE_MODEL` | `mistral:7b` | Ollama summarization model name |
 | `BETTERDB_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
 
+#### Embeddings work with zero config
+
+If no embedding provider is detected (no Ollama models, no API keys), BetterDB falls back to **on-device embeddings** via `@xenova/transformers` (`all-MiniLM-L6-v2`, 384-dim, Apache-2.0). No API key, no running service — the model weights download once on first use and are cached thereafter. Auto-detected providers (Ollama, then API keys) take priority when available.
+
 #### API Keys
 
-At least one embedding provider and one summarization provider must be available. Ollama is free and local; the others require API keys.
+Embeddings always work (on-device fallback above). A summarization provider is still required — Ollama is free and local; the others require API keys.
 
 | Variable | Provider | Used for |
 |----------|----------|----------|
