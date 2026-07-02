@@ -1,8 +1,9 @@
 import type { EpisodicMemory } from "./schema.js";
+import type { RecallResult } from "./recall.js";
 
 // Recall (KNN + composite recency/importance scoring + access reinforcement)
 // now lives in @betterdb/agent-memory's MemoryStore, reached via
-// PluginMemoryStore.recall. This module keeps only the injection formatter.
+// PluginMemoryStore.recall. This module keeps only the formatters.
 
 // --- Format for Injection ---
 
@@ -44,4 +45,66 @@ export function formatForInjection(memories: EpisodicMemory[]): string {
   }
 
   return sections.join("\n");
+}
+
+// --- Format search_context result (reader contract) ---
+
+function detailLines(m: EpisodicMemory): string[] {
+  const lines: string[] = [];
+  for (const d of m.summary.decisions) lines.push(`    - Decision: ${d}`);
+  for (const p of m.summary.problemsSolved) {
+    lines.push(`    - Solved: ${p.problem} → ${p.resolution}`);
+  }
+  for (const t of m.summary.openThreads) lines.push(`    - Open: ${t}`);
+  return lines;
+}
+
+/**
+ * Format an escalating-recall result for the search_context tool. The output
+ * is self-instructing: on a miss it tells the model to be honest and not
+ * fabricate (mirroring the LongMemEval reader prompt); on a hit it tells the
+ * model to answer only from the excerpts. `topK` caps how many hits are shown.
+ */
+export function formatSearchResult(
+  query: string,
+  result: RecallResult,
+  topK: number,
+): string {
+  if (result.hits.length === 0) {
+    const searched =
+      result.scope === "all"
+        ? "this project AND all other projects"
+        : "this project";
+    const offer =
+      result.scope === "project"
+        ? ` You may offer to search across ALL projects — call search_context again with scope="all".`
+        : "";
+    return [
+      `# Memory search: "${query}"`,
+      `Searched: ${searched}.`,
+      `NO memories cleared the relevance threshold.`,
+      `Tell the user you found nothing in memory about this. Do NOT fabricate an ` +
+        `answer, and do NOT substitute a codebase search as if it were recall.${offer}`,
+    ].join("\n");
+  }
+
+  const shown = result.hits.slice(0, topK);
+  const lines: string[] = [
+    `# Memory search: "${query}"`,
+    `Scope: ${result.scope} · confidence: ${result.confidence} · ${shown.length} match(es)`,
+    ``,
+  ];
+  shown.forEach((h, i) => {
+    const date = h.memory.timestamp.split("T")[0];
+    lines.push(
+      `[${i + 1}] (rel ${h.relevance.toFixed(2)}, ${date}) ${h.memory.summary.oneLineSummary}`,
+    );
+    lines.push(...detailLines(h.memory));
+  });
+  lines.push(``);
+  lines.push(
+    `Answer the user ONLY from these excerpts. If they do not contain the answer, ` +
+      `say so plainly — do not invent.`,
+  );
+  return lines.join("\n");
 }

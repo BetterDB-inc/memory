@@ -4,9 +4,10 @@ import { z } from "zod";
 import { getValkeyClient } from "../client/valkey.js";
 import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
-import { formatForInjection } from "../memory/retrieval.js";
+import { formatSearchResult } from "../memory/retrieval.js";
+import { escalatingRecall } from "../memory/recall.js";
 import { getCwdProject } from "../memory/capture.js";
-import { isConfigured } from "../config.js";
+import { config, isConfigured } from "../config.js";
 import type { EpisodicMemory, KnowledgeEntry } from "../memory/schema.js";
 
 const SETUP_MESSAGE =
@@ -21,12 +22,21 @@ const server = new McpServer({
 
 server.tool(
   "search_context",
-  "Search your past Claude Code sessions for relevant context, decisions, or patterns",
+  "Search your past Claude Code sessions for relevant context, decisions, or patterns. " +
+    "Escalates automatically (project → wider → cross-project) and gates by relevance, " +
+    "so a miss means nothing relevant is stored — never fabricate to fill a miss.",
   {
     query: z.string().describe("The search query"),
-    top_k: z.number().int().min(1).max(20).optional().describe("Max results (default: 5)"),
+    top_k: z.number().int().min(1).max(20).optional().describe("Max results shown (default: 5)"),
+    scope: z
+      .enum(["project", "all"])
+      .optional()
+      .describe(
+        "Search scope. 'project' (default) stays in the current project; " +
+          "'all' also searches across every project — use when a project-scoped search found nothing.",
+      ),
   },
-  async ({ query, top_k }) => {
+  async ({ query, top_k, scope }) => {
     if (!isConfigured()) {
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
@@ -36,17 +46,16 @@ server.tool(
 
     const project = getCwdProject();
     const k = top_k ?? 5;
+    // Default (project) scope stays in-project so a miss can *offer* to widen
+    // to all projects — the two-step consent flow. Only an explicit scope="all"
+    // crosses namespaces, and only if cross-project is enabled globally.
+    const allowCrossProject = scope === "all" && config.recall.allowCrossProject;
 
-    const memories = await store.recall(query, project, k);
-    const formatted = formatForInjection(memories);
+    const result = await escalatingRecall(store, query, project, allowCrossProject);
+    const formatted = formatSearchResult(query, result, k);
 
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: formatted || "No matching memories found.",
-        },
-      ],
+      content: [{ type: "text" as const, text: formatted }],
     };
   },
 );

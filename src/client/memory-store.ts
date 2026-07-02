@@ -1,5 +1,6 @@
 import {
   MemoryStore,
+  similarityFromDistance,
   type ConsolidateOptions,
   type ConsolidateResult,
   type EmbedFn,
@@ -33,6 +34,15 @@ interface SourcePayload {
   summary: EpisodicMemory["summary"];
   branch: string;
   timestamp: string;
+}
+
+/** A recalled memory carrying its relevance and composite score for gating. */
+export interface ScoredMemory {
+  memory: EpisodicMemory;
+  /** Cosine similarity to the query, 0..1 (higher = more relevant). */
+  relevance: number;
+  /** Composite recall score (similarity + recency + importance). */
+  score: number;
 }
 
 export function episodicToSource(memory: EpisodicMemory): string {
@@ -138,19 +148,39 @@ export class PluginMemoryStore {
   }
 
   /**
-   * KNN recall scoped to `project`, ranked by MemoryStore's composite score
-   * (similarity + recency + importance). Recalled memories are reinforced
-   * automatically. Embeds `query` internally.
+   * KNN recall ranked by MemoryStore's composite score. Unlike the raw store,
+   * this returns each memory *with* its relevance so callers can gate on it —
+   * `relevance` is cosine similarity (0..1, higher = closer) derived from the
+   * hit's raw distance; `score` is the composite (similarity + recency +
+   * importance). Omit `project` to search across all namespaces.
    */
   async recall(
     query: string,
-    project: string,
-    topK: number,
-  ): Promise<EpisodicMemory[]> {
-    const hits = await this.store.recall(query, { namespace: project, k: topK });
-    return hits
-      .map((hit) => itemToEpisodic(hit.item))
-      .filter((m): m is EpisodicMemory => m !== null);
+    opts: {
+      project?: string;
+      k: number;
+      threshold?: number;
+      reinforce?: boolean;
+    },
+  ): Promise<ScoredMemory[]> {
+    const hits = await this.store.recall(query, {
+      ...(opts.project !== undefined ? { namespace: opts.project } : {}),
+      k: opts.k,
+      ...(opts.threshold !== undefined ? { threshold: opts.threshold } : {}),
+      reinforce: opts.reinforce ?? true,
+    });
+    const out: ScoredMemory[] = [];
+    for (const hit of hits) {
+      const memory = itemToEpisodic(hit.item);
+      if (memory) {
+        out.push({
+          memory,
+          score: hit.score,
+          relevance: similarityFromDistance(hit.similarity),
+        });
+      }
+    }
+    return out;
   }
 
   /** KNN recall from a precomputed embedding (see {@link recall}). */

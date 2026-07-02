@@ -2,10 +2,29 @@
 
 ## Memory & Recall
 
-This project has a persistent memory system (BetterDB). When a user asks about previous sessions, past commands, earlier decisions, or anything from prior conversations, **always use the `search_context` MCP tool first** before answering. Do not guess or rely only on CLAUDE.md — search your actual memories.
+This project has a persistent memory system (BetterDB). Retrieval is already
+strong (~95% recall@k on the LongMemEval harness); the failure mode to guard
+against is not *finding* memories but *not looking* and then confabulating.
+
+**Memory-first protocol.** Before answering from your own knowledge — and
+*before ever claiming you don't know or that something doesn't exist* — call
+`search_context` whenever the user references anything that could live in
+memory: a past session, decision, or command, **or any specific term, name,
+token, ID, file, or value you don't already recognize.** Then:
+- Answer **only** from what comes back.
+- If it doesn't contain the answer, say "I searched memory and found nothing
+  about X" — **never fabricate, and never substitute a codebase grep as if it
+  were recall.**
+- If a project-scoped search returns nothing, offer to search across all
+  projects (`search_context` with `scope="all"`).
+- State when you *did* consult memory, so the user has a signal it works.
+
+The `search_context` result is self-instructing — follow the directives in its
+output (it reports the scope searched, the confidence, and whether to widen or
+to report a clean miss).
 
 Available MCP tools:
-- `search_context` — Search past sessions for relevant context. Use this for any "what did I/we do" questions.
+- `search_context` — Search past sessions. Escalates project → wider → cross-project and gates by relevance. Params: `query`, `top_k`, `scope` (`project`|`all`).
 - `store_insight` — Save an important decision, pattern, or warning explicitly.
 - `list_open_threads` — Show unresolved items from past sessions.
 - `forget` — Delete a specific memory.

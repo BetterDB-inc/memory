@@ -52,6 +52,17 @@ export const config = {
     contextFile: env("BETTERDB_CONTEXT_FILE") ?? ".betterdb_context.md",
     agingIntervalHours: Number(env("BETTERDB_AGING_INTERVAL_HOURS") ?? 6),
   },
+  recall: {
+    // Cosine-similarity confidence gates (0..1). Calibrate against the
+    // LongMemEval harness — highest tau that keeps recall@k at baseline.
+    tauHigh: Number(env("BETTERDB_RECALL_TAU_HIGH") ?? 0.55),
+    tauLow: Number(env("BETTERDB_RECALL_TAU_LOW") ?? 0.35),
+    // Over-fetch pool sizes: rung-1 (project, high bar) and rung-2/3 (wider).
+    poolK: Number(env("BETTERDB_RECALL_POOL_K") ?? 10),
+    poolKWide: Number(env("BETTERDB_RECALL_POOL_K_WIDE") ?? 20),
+    // Allow the ladder / search_context to fall back to cross-project scope.
+    allowCrossProject: env("BETTERDB_ALLOW_CROSS_PROJECT") !== "false",
+  },
   allowRemoteFallback: env("BETTERDB_ALLOW_REMOTE_FALLBACK") !== "false",
   providers: {
     embedProvider: env("BETTERDB_EMBED_PROVIDER") as

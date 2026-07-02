@@ -3,6 +3,7 @@ import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import { SessionCapture } from "../memory/capture.js";
 import { formatForInjection } from "../memory/retrieval.js";
+import { escalatingRecall } from "../memory/recall.js";
 import { config, isConfigured } from "../config.js";
 
 /**
@@ -41,11 +42,13 @@ runHook(async () => {
   const queryContext = await capture.getQueryContext();
 
   const project = queryContext.split("\n")[0]?.replace("Project: ", "") ?? "unknown";
-  const memories = await store.recall(
-    queryContext,
-    project,
-    config.memory.maxContextMemories,
-  );
+  // Project-scoped, threshold-gated recall (no cross-project auto-inject at
+  // startup — nothing to consent to yet). Only memories clearing the relevance
+  // bar are injected, so we stop padding context with irrelevant top-N filler.
+  const result = await escalatingRecall(store, queryContext, project, false);
+  const memories = result.hits
+    .slice(0, config.memory.maxContextMemories)
+    .map((h) => h.memory);
 
   if (memories.length > 0) {
     const formatted = formatForInjection(memories);

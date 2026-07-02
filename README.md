@@ -80,9 +80,23 @@ Copy `.env.example` to `.env` and fill in your values before running `bunx @bett
 | `BETTERDB_VALKEY_URL` | `redis://localhost:6379` | Valkey connection URL |
 | `BETTERDB_VALKEY_INDEX_NAME` | `betterdb-memory-index` | Valkey search index name |
 | `BETTERDB_EMBED_DIM` | `1024` | Embedding dimensions |
-| `BETTERDB_MAX_CONTEXT_MEMORIES` | `5` | Memories injected per session |
+| `BETTERDB_MAX_CONTEXT_MEMORIES` | `5` | Max memories injected per session (after gating) |
 | `BETTERDB_CONTEXT_FILE` | `.betterdb_context.md` | Context injection file |
 | `BETTERDB_ALLOW_REMOTE_FALLBACK` | `true` | Fall back to remote APIs if local models unavailable |
+
+#### Recall Gating
+
+Recall over-fetches a candidate pool, gates it by relevance, and escalates on a
+miss (project → wider pool → cross-project). `search_context` returns nothing
+only when nothing clears the bar — so a miss is honest, not a silent drop.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTERDB_RECALL_TAU_HIGH` | `0.55` | Cosine-similarity bar for a confident (rung-1) match |
+| `BETTERDB_RECALL_TAU_LOW` | `0.35` | Bar for a weak-but-usable (rung-2/3) match |
+| `BETTERDB_RECALL_POOL_K` | `10` | Rung-1 over-fetch pool (project, high bar) |
+| `BETTERDB_RECALL_POOL_K_WIDE` | `20` | Rung-2/3 over-fetch pool (wider / cross-project) |
+| `BETTERDB_ALLOW_CROSS_PROJECT` | `true` | Allow escalation / `scope="all"` to search across projects |
 
 #### Model Providers
 
