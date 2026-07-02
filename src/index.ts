@@ -40,6 +40,9 @@ Commands:
   uninstall        Remove hooks, MCP server, and compiled binaries
   status           Check health of Valkey and model providers
   maintain         Run aging/consolidation pipeline manually
+  forget           Bulk-delete memories by scope (dry run; pass --apply)
+                   Flags: --project <name> (default: cwd) | --all-projects
+                          --branch <name> --tags <a,b> --apply
   migrate          Move legacy betterdb:memory:* memories into the MemoryStore
                    (dry run; pass --apply to perform)
   ingest-claude-md Ingest a CLAUDE.md / MEMORY.md file into the store [path]
@@ -67,6 +70,9 @@ switch (command) {
     break;
   case "maintain":
     await runMaintain();
+    break;
+  case "forget":
+    await runForget(process.argv.slice(3));
     break;
   case "migrate":
     await runMigrate(process.argv.includes("--apply"));
@@ -353,8 +359,15 @@ async function runStatus() {
     const { getPluginMemoryStore } = await import("./client/memory-store.js");
     const client = await getValkeyClient();
     const store = await getPluginMemoryStore();
-    const memories = await store.listMemories();
-    console.log(`OK (${memories.length} memories, ${config.valkey.url})`);
+    const stats = await store.stats();
+    console.log(`OK (${stats.itemCount} memories, ${config.valkey.url})`);
+    const w = stats.config.weights;
+    const halfLifeDays = Math.round(stats.config.halfLifeSeconds / 86400);
+    console.log(
+      `  Recall scoring: half-life ${halfLifeDays}d · ` +
+        `weights sim/rec/imp ${w.similarity}/${w.recency}/${w.importance}` +
+        (stats.evictions > 0 ? ` · ${stats.evictions} evictions` : ""),
+    );
     await store.close();
     await client.quit();
   } catch (err) {
@@ -455,6 +468,78 @@ async function runMaintain() {
   await pipeline.runFullPipeline();
 
   console.log("\nAging pipeline complete.");
+  await store.close();
+  await valkeyClient.quit();
+}
+
+// ---------------------------------------------------------------------------
+// forget (bulk delete by scope: project / branch / tags)
+// ---------------------------------------------------------------------------
+
+async function runForget(argv: string[]) {
+  console.log("BetterDB Memory for Claude Code — Forget by scope\n");
+
+  const flag = (name: string): string | undefined => {
+    const i = argv.indexOf(`--${name}`);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const apply = argv.includes("--apply");
+  const allProjects = argv.includes("--all-projects");
+  const branch = flag("branch");
+  const tags = flag("tags")?.split(",").map((t) => t.trim()).filter(Boolean);
+
+  const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore, memoryTags } = await import("./client/memory-store.js");
+  const { getCwdProject } = await import("./memory/capture.js");
+
+  const project = allProjects ? undefined : (flag("project") ?? getCwdProject());
+
+  // Refuse an unbounded delete: --all-projects must be narrowed by branch/tags.
+  if (project === undefined && branch === undefined && (!tags || tags.length === 0)) {
+    console.error("Refusing to delete every memory. Narrow --all-projects with --branch or --tags.");
+    process.exit(1);
+  }
+
+  const scopeDesc = [
+    project !== undefined ? `project=${project}` : "all projects",
+    branch !== undefined ? `branch=${branch}` : null,
+    tags && tags.length > 0 ? `tags=${tags.join(",")}` : null,
+  ].filter(Boolean).join(", ");
+  console.log(`Scope: ${scopeDesc}`);
+
+  const valkeyClient = await getValkeyClient();
+  const store = await getPluginMemoryStore();
+
+  // Dry-run count: list the project's memories and match branch/tags in-memory.
+  const candidates = (await store.listMemories(project)).filter((m) => {
+    if (branch !== undefined && m.branch !== branch) return false;
+    if (tags && tags.length > 0) {
+      const mt = memoryTags(m);
+      if (!tags.some((t) => mt.includes(t))) return false;
+    }
+    return true;
+  });
+
+  console.log(`Matched ${candidates.length} memories.`);
+  for (const m of candidates.slice(0, 5)) {
+    console.log(`  - [${m.branch}] ${m.summary.oneLineSummary.slice(0, 70)}`);
+  }
+  if (candidates.length > 5) console.log(`  ... and ${candidates.length - 5} more`);
+
+  if (!apply) {
+    console.log("\nDry run — re-run with --apply to delete.");
+    await store.close();
+    await valkeyClient.quit();
+    return;
+  }
+
+  const deleted = await store.forgetByScope({
+    ...(project !== undefined ? { project } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(tags && tags.length > 0 ? { tags } : {}),
+  });
+  console.log(`\nDeleted ${deleted} memories.`);
+
   await store.close();
   await valkeyClient.quit();
 }

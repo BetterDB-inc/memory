@@ -63,9 +63,11 @@ Claude can use these mid-conversation:
 
 ```bash
 bunx @betterdb/memory install        # Set up hooks + MCP server
-bunx @betterdb/memory status         # Check health
+bunx @betterdb/memory status         # Check health + recall scoring config
 bunx @betterdb/memory uninstall      # Remove everything
 bunx @betterdb/memory maintain       # Run aging/compression manually
+bunx @betterdb/memory forget         # Bulk-delete by scope (dry run; --apply to delete)
+                                     #   --project <name> | --all-projects --branch <b> --tags <a,b>
 bunx @betterdb/memory docker-valkey  # Manage Docker Valkey container
 ```
 

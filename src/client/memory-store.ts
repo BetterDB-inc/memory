@@ -5,6 +5,8 @@ import {
   type ConsolidateResult,
   type EmbedFn,
   type MemoryItem,
+  type MemoryScope,
+  type MemoryStats,
   type MemoryStoreClient,
 } from "@betterdb/agent-memory";
 import {
@@ -69,6 +71,30 @@ export function memoryTags(memory: EpisodicMemory): string[] {
   if (memory.summary.problemsSolved.length > 0) tags.push("problem");
   if (memory.summary.openThreads.length > 0) tags.push("open-thread");
   return tags;
+}
+
+/**
+ * The text embedded for a memory. Previously only `oneLineSummary` was
+ * embedded, so recall could never see the structured detail (decisions,
+ * patterns, problems, open threads) — the single biggest recall-quality limit.
+ * We fold those into the vector here. `filesChanged` is deliberately omitted:
+ * bare file paths are generic and dominate the similarity band with noise.
+ */
+export function buildEmbedText(memory: EpisodicMemory): string {
+  const s = memory.summary;
+  const parts: string[] = [s.oneLineSummary];
+  if (s.decisions.length > 0) parts.push(`Decisions: ${s.decisions.join("; ")}`);
+  if (s.patterns.length > 0) parts.push(`Patterns: ${s.patterns.join("; ")}`);
+  if (s.problemsSolved.length > 0) {
+    const solved = s.problemsSolved
+      .map((p) => `${p.problem} → ${p.resolution}`)
+      .join("; ");
+    parts.push(`Problems solved: ${solved}`);
+  }
+  if (s.openThreads.length > 0) {
+    parts.push(`Open threads: ${s.openThreads.join("; ")}`);
+  }
+  return parts.join("\n");
 }
 
 export function itemToEpisodic(item: MemoryItem): EpisodicMemory | null {
@@ -162,12 +188,14 @@ export class PluginMemoryStore {
   }
 
   /**
-   * Store an episodic memory and return its generated id. The vector is
-   * derived from `summary.oneLineSummary` inside MemoryStore — callers no
-   * longer precompute an embedding.
+   * Store an episodic memory and return its generated id. The vector is derived
+   * from {@link buildEmbedText} (summary + structured detail) inside
+   * MemoryStore — callers no longer precompute an embedding. The full episodic
+   * memory is preserved in `source` for reconstruction; the embed text only
+   * shapes the vector.
    */
   storeMemory(memory: EpisodicMemory): Promise<string> {
-    return this.store.remember(memory.summary.oneLineSummary, {
+    return this.store.remember(buildEmbedText(memory), {
       importance: memory.importanceScore,
       namespace: memory.project,
       // Branch as the native thread scope; content-type tags for filtered
@@ -294,6 +322,28 @@ export class PluginMemoryStore {
 
   async deleteMemory(memoryId: string): Promise<void> {
     await this.store.forget(memoryId);
+  }
+
+  /**
+   * Bulk-delete every memory matching a scope (project namespace, branch
+   * thread, and/or tags). Returns the number deleted. At least one scope field
+   * should be set — an empty scope would match the whole store.
+   */
+  forgetByScope(scope: {
+    project?: string;
+    branch?: string;
+    tags?: string[];
+  }): Promise<number> {
+    const s: MemoryScope & { tags?: string[] } = {};
+    if (scope.project !== undefined) s.namespace = scope.project;
+    if (scope.branch !== undefined) s.threadId = scope.branch;
+    if (scope.tags !== undefined && scope.tags.length > 0) s.tags = scope.tags;
+    return this.store.forgetByScope(s);
+  }
+
+  /** Live store stats: item count, evictions, and active composite config. */
+  stats(): Promise<MemoryStats> {
+    return this.store.stats();
   }
 
   close(): Promise<void> {
