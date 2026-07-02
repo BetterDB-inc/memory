@@ -28,6 +28,20 @@ export const PRESET_LIGHTWEIGHT: ModelPreset = {
   embedDim: 384,
 };
 
+/**
+ * Preset for an explicitly-selected Ollama provider. Unlike auto-detect (which
+ * picks a built-in preset whose model is installed), an explicit
+ * BETTERDB_*_PROVIDER=ollama must honor the configured model/dim — otherwise a
+ * user who set BETTERDB_SUMMARIZE_MODEL is silently overridden by PRESET_CLEAN.
+ */
+function ollamaPresetFromConfig(): ModelPreset {
+  return {
+    embedModel: config.ollama.embedModel,
+    summarizeModel: config.ollama.summarizeModel,
+    embedDim: config.ollama.embedDim,
+  };
+}
+
 // --- ModelClient Interface ---
 
 export interface ModelClient {
@@ -219,7 +233,7 @@ function createExplicitEmbedProvider(
     }
     case "ollama": {
       const { OllamaModelClient } = require("./providers/ollama.js");
-      return new OllamaModelClient(PRESET_CLEAN, config.ollama.url);
+      return new OllamaModelClient(ollamaPresetFromConfig(), config.ollama.url);
     }
     case "openai": {
       if (!p.openaiKey) throw new Error("BETTERDB_EMBED_PROVIDER=openai but OPENAI_API_KEY is not set");
@@ -253,7 +267,7 @@ function createExplicitSummarizeProvider(
   switch (name) {
     case "ollama": {
       const { OllamaModelClient } = require("./providers/ollama.js");
-      return new OllamaModelClient(PRESET_CLEAN, config.ollama.url);
+      return new OllamaModelClient(ollamaPresetFromConfig(), config.ollama.url);
     }
     case "openai": {
       if (!p.openaiKey) throw new Error("BETTERDB_SUMMARIZE_PROVIDER=openai but OPENAI_API_KEY is not set");
