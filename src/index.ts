@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const HOME = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
 const BETTERDB_DIR = join(HOME, ".betterdb");
 const BIN_DIR = join(BETTERDB_DIR, "bin");
