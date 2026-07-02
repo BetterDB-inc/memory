@@ -55,7 +55,7 @@ export const config = {
   allowRemoteFallback: env("BETTERDB_ALLOW_REMOTE_FALLBACK") !== "false",
   providers: {
     embedProvider: env("BETTERDB_EMBED_PROVIDER") as
-      | "ollama" | "openai" | "voyage" | "groq" | "together"
+      | "local" | "ollama" | "openai" | "voyage" | "groq" | "together"
       | undefined,
     summarizeProvider: env("BETTERDB_SUMMARIZE_PROVIDER") as
       | "ollama" | "openai" | "anthropic" | "groq" | "together"
