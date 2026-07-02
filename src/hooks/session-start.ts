@@ -1,7 +1,7 @@
 import { readRawPayload, runHook } from "./_utils.js";
 import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
-import { SessionCapture } from "../memory/capture.js";
+import { SessionCapture, getGitBranch } from "../memory/capture.js";
 import { formatForInjection } from "../memory/retrieval.js";
 import { escalatingRecall } from "../memory/recall.js";
 import { config, isConfigured } from "../config.js";
@@ -42,10 +42,16 @@ runHook(async () => {
   const queryContext = await capture.getQueryContext();
 
   const project = queryContext.split("\n")[0]?.replace("Project: ", "") ?? "unknown";
-  // Project-scoped, threshold-gated recall (no cross-project auto-inject at
-  // startup — nothing to consent to yet). Only memories clearing the relevance
-  // bar are injected, so we stop padding context with irrelevant top-N filler.
-  const result = await escalatingRecall(store, queryContext, project, false);
+  const branch = getGitBranch();
+  // Project+branch-scoped, threshold-gated recall (no cross-project auto-inject
+  // at startup — nothing to consent to yet). Only memories clearing the
+  // relevance bar are injected, so we stop padding context with irrelevant
+  // top-N filler.
+  const result = await escalatingRecall(store, queryContext, {
+    project,
+    ...(branch !== "unknown" ? { branch } : {}),
+    allowCrossProject: false,
+  });
   const memories = result.hits
     .slice(0, config.memory.maxContextMemories)
     .map((h) => h.memory);

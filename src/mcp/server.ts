@@ -6,7 +6,7 @@ import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import { formatSearchResult } from "../memory/retrieval.js";
 import { escalatingRecall } from "../memory/recall.js";
-import { getCwdProject } from "../memory/capture.js";
+import { getCwdProject, getGitBranch } from "../memory/capture.js";
 import { config, isConfigured } from "../config.js";
 import type { EpisodicMemory, KnowledgeEntry } from "../memory/schema.js";
 
@@ -35,8 +35,15 @@ server.tool(
         "Search scope. 'project' (default) stays in the current project; " +
           "'all' also searches across every project — use when a project-scoped search found nothing.",
       ),
+    tags: z
+      .array(z.enum(["decision", "pattern", "problem", "open-thread"]))
+      .optional()
+      .describe(
+        "Filter to memories of these content types — e.g. ['decision'] to " +
+          "recall only decisions, ['open-thread'] for unresolved items.",
+      ),
   },
-  async ({ query, top_k, scope }) => {
+  async ({ query, top_k, scope, tags }) => {
     if (!isConfigured()) {
       return { content: [{ type: "text" as const, text: SETUP_MESSAGE }] };
     }
@@ -45,13 +52,19 @@ server.tool(
     const store = await getPluginMemoryStore((t) => modelClient.embed(t));
 
     const project = getCwdProject();
+    const branch = getGitBranch();
     const k = top_k ?? 5;
     // Default (project) scope stays in-project so a miss can *offer* to widen
     // to all projects — the two-step consent flow. Only an explicit scope="all"
     // crosses namespaces, and only if cross-project is enabled globally.
     const allowCrossProject = scope === "all" && config.recall.allowCrossProject;
 
-    const result = await escalatingRecall(store, query, project, allowCrossProject);
+    const result = await escalatingRecall(store, query, {
+      project,
+      ...(branch !== "unknown" ? { branch } : {}),
+      ...(tags !== undefined ? { tags } : {}),
+      allowCrossProject,
+    });
     const formatted = formatSearchResult(query, result, k);
 
     return {

@@ -24,7 +24,7 @@ output (it reports the scope searched, the confidence, and whether to widen or
 to report a clean miss).
 
 Available MCP tools:
-- `search_context` — Search past sessions. Escalates project → wider → cross-project and gates by relevance. Params: `query`, `top_k`, `scope` (`project`|`all`).
+- `search_context` — Search past sessions. Escalates project+branch → project → cross-project and gates by relevance. Params: `query`, `top_k`, `scope` (`project`|`all`), `tags` (filter to `decision`|`pattern`|`problem`|`open-thread`).
 - `store_insight` — Save an important decision, pattern, or warning explicitly.
 - `list_open_threads` — Show unresolved items from past sessions.
 - `forget` — Delete a specific memory.

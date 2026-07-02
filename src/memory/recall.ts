@@ -16,9 +16,19 @@ import type { PluginMemoryStore, ScoredMemory } from "../client/memory-store.js"
 export interface RecallResult {
   hits: ScoredMemory[];
   scope: "project" | "all";
-  /** 1: project · 2: project/wider · 3: cross-project · 0: nothing. */
+  /** 1: project+branch (or project) · 2: project · 3: cross-project · 0: nothing. */
   rung: 0 | 1 | 2 | 3;
   confidence: "high" | "low" | "none";
+}
+
+/** Scoping for {@link escalatingRecall}. */
+export interface RecallQuery {
+  project: string;
+  /** Git branch (native thread scope). Rung 1 narrows to it when present. */
+  branch?: string;
+  /** Content-type filter (e.g. `["decision"]`) applied at every rung. */
+  tags?: string[];
+  allowCrossProject: boolean;
 }
 
 interface Gated {
@@ -51,33 +61,42 @@ function storeThreshold(): number {
 }
 
 /**
- * Escalating recall:
- *   rung 1 — project scope, pool `poolK`.
- *   rung 2 — project scope, wider pool `poolKWide`.
+ * Escalating recall, narrow → wide:
+ *   rung 1 — project + `branch` (when given), pool `poolK`. Same project and
+ *            branch is the most relevant scope; without a branch this is just
+ *            project scope.
+ *   rung 2 — project, any branch, wider pool `poolKWide`.
  *   rung 3 — cross-project probe (no reinforcement). Only when
  *            `allowCrossProject` — the caller gates this on user consent / an
  *            explicit `scope=all`, since another project's memory is often
  *            noise or privacy-sensitive.
- * Stops at the first rung that yields gated hits.
+ * A `tags` filter, when present, applies at every rung. Stops at the first rung
+ * that yields gated hits.
  */
 export async function escalatingRecall(
   store: PluginMemoryStore,
   query: string,
-  project: string,
-  allowCrossProject: boolean,
+  q: RecallQuery,
 ): Promise<RecallResult> {
   const { poolK, poolKWide } = config.recall;
   const threshold = storeThreshold();
+  const { project, branch, tags, allowCrossProject } = q;
 
-  // rung 1 — project
-  let pool = await store.recall(query, { project, k: poolK, threshold });
+  // rung 1 — project + branch (most specific).
+  let pool = await store.recall(query, {
+    project,
+    ...(branch !== undefined ? { branch } : {}),
+    tags,
+    k: poolK,
+    threshold,
+  });
   let g = gate(pool);
   if (g.hits.length > 0) {
     return { hits: g.hits, scope: "project", rung: 1, confidence: g.confidence };
   }
 
-  // rung 2 — project, wider pool
-  pool = await store.recall(query, { project, k: poolKWide, threshold });
+  // rung 2 — project, any branch, wider pool.
+  pool = await store.recall(query, { project, tags, k: poolKWide, threshold });
   g = gate(pool);
   if (g.hits.length > 0) {
     return { hits: g.hits, scope: "project", rung: 2, confidence: g.confidence };
@@ -86,7 +105,12 @@ export async function escalatingRecall(
   // rung 3 — cross-project probe. reinforce:false so a speculative wide search
   // doesn't bump access counts on unrelated projects' memories.
   if (allowCrossProject) {
-    pool = await store.recall(query, { k: poolKWide, threshold, reinforce: false });
+    pool = await store.recall(query, {
+      tags,
+      k: poolKWide,
+      threshold,
+      reinforce: false,
+    });
     g = gate(pool);
     if (g.hits.length > 0) {
       return { hits: g.hits, scope: "all", rung: 3, confidence: g.confidence };

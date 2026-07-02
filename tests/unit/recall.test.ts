@@ -32,6 +32,8 @@ const scored = (summary: string, relevance: number): ScoredMemory => ({
 
 type RecallOpts = {
   project?: string;
+  branch?: string;
+  tags?: string[];
   k: number;
   threshold?: number;
   reinforce?: boolean;
@@ -53,9 +55,13 @@ const asStore = (f: FakeStore): PluginMemoryStore =>
 // --- Escalation ladder ---
 
 describe("escalatingRecall", () => {
-  test("rung 1: a confident project hit stops immediately", async () => {
+  test("rung 1: a confident project+branch hit stops immediately", async () => {
     const store = new FakeStore(() => [scored("confident", 0.7)]);
-    const result = await escalatingRecall(asStore(store), "q", "memory", true);
+    const result = await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      branch: "main",
+      allowCrossProject: true,
+    });
 
     expect(result.rung).toBe(1);
     expect(result.scope).toBe("project");
@@ -66,21 +72,29 @@ describe("escalatingRecall", () => {
     // Rung 1 over-fetches the widened pool (k=10), not the old top-5.
     expect(store.calls[0]?.k).toBe(10);
     expect(store.calls[0]?.project).toBe("memory");
+    // Rung 1 narrows to the current branch.
+    expect(store.calls[0]?.branch).toBe("main");
   });
 
-  test("rung 2: the narrow pool is all noise; the wider pool surfaces a hit", async () => {
-    // Rungs 1 and 2 share the same relative gate — only the pool width differs.
-    // The narrow pool (k=10) returns only sub-floor noise; the wider pool (k=20)
-    // reaches an above-floor memory, so escalation recovers it at rung 2.
+  test("rung 2: nothing on this branch; a project-wide hit is recovered", async () => {
+    // Rung 1 scopes to the branch and finds nothing; rung 2 drops the branch
+    // and widens the pool, recovering a memory from another branch.
     const store = new FakeStore((opts) =>
-      opts.k >= 20 ? [scored("recovered", 0.6)] : [scored("noise", 0.2)],
+      opts.branch === undefined ? [scored("other-branch", 0.6)] : [],
     );
-    const result = await escalatingRecall(asStore(store), "q", "memory", true);
+    const result = await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      branch: "feature",
+      allowCrossProject: true,
+    });
 
     expect(result.rung).toBe(2);
     expect(result.scope).toBe("project");
     expect(result.hits).toHaveLength(1);
     expect(store.calls).toHaveLength(2);
+    // Rung 2 keeps the project but drops the branch and widens the pool.
+    expect(store.calls[1]?.project).toBe("memory");
+    expect(store.calls[1]?.branch).toBeUndefined();
     expect(store.calls[1]?.k).toBe(20);
   });
 
@@ -89,7 +103,10 @@ describe("escalatingRecall", () => {
       // In-project searches return nothing; the namespace-less probe hits.
       opts.project === undefined ? [scored("elsewhere", 0.5)] : [],
     );
-    const result = await escalatingRecall(asStore(store), "q", "memory", true);
+    const result = await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      allowCrossProject: true,
+    });
 
     expect(result.rung).toBe(3);
     expect(result.scope).toBe("all");
@@ -99,9 +116,27 @@ describe("escalatingRecall", () => {
     expect(store.calls[2]?.reinforce).toBe(false);
   });
 
+  test("tags filter is passed through at every rung", async () => {
+    const store = new FakeStore(() => []);
+    await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      branch: "main",
+      tags: ["decision"],
+      allowCrossProject: true,
+    });
+
+    expect(store.calls).toHaveLength(3);
+    for (const call of store.calls) {
+      expect(call.tags).toEqual(["decision"]);
+    }
+  });
+
   test("cross-project disabled: never probes, reports a clean project miss", async () => {
     const store = new FakeStore(() => []);
-    const result = await escalatingRecall(asStore(store), "q", "memory", false);
+    const result = await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      allowCrossProject: false,
+    });
 
     expect(result.rung).toBe(0);
     expect(result.scope).toBe("project");
@@ -123,7 +158,11 @@ describe("escalatingRecall", () => {
       scored("noise-5", 0.1),
       scored("CANARY-7Q4X9M-betterdb-valkey-proof", 0.72),
     ]);
-    const result = await escalatingRecall(asStore(store), "canary token", "memory", true);
+    const result = await escalatingRecall(asStore(store), "canary token", {
+      project: "memory",
+      branch: "main",
+      allowCrossProject: true,
+    });
 
     expect(result.rung).toBe(1);
     expect(result.hits).toHaveLength(1);

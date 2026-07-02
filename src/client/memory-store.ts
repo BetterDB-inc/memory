@@ -54,6 +54,20 @@ export function episodicToSource(memory: EpisodicMemory): string {
   return JSON.stringify(payload);
 }
 
+/**
+ * Content-type tags for a memory, derived from which summary sections it fills.
+ * Stored natively (not in the opaque `source` blob) so recall can filter on
+ * them — e.g. surface only decisions, or only unresolved open threads.
+ */
+export function memoryTags(memory: EpisodicMemory): string[] {
+  const tags: string[] = [];
+  if (memory.summary.decisions.length > 0) tags.push("decision");
+  if (memory.summary.patterns.length > 0) tags.push("pattern");
+  if (memory.summary.problemsSolved.length > 0) tags.push("problem");
+  if (memory.summary.openThreads.length > 0) tags.push("open-thread");
+  return tags;
+}
+
 export function itemToEpisodic(item: MemoryItem): EpisodicMemory | null {
   let summary: EpisodicMemory["summary"];
   let branch: string;
@@ -143,6 +157,10 @@ export class PluginMemoryStore {
     return this.store.remember(memory.summary.oneLineSummary, {
       importance: memory.importanceScore,
       namespace: memory.project,
+      // Branch as the native thread scope; content-type tags for filtered
+      // recall. Both are queryable, unlike the free-form `source` payload.
+      threadId: memory.branch,
+      tags: memoryTags(memory),
       source: episodicToSource(memory),
     });
   }
@@ -152,12 +170,16 @@ export class PluginMemoryStore {
    * this returns each memory *with* its relevance so callers can gate on it —
    * `relevance` is cosine similarity (0..1, higher = closer) derived from the
    * hit's raw distance; `score` is the composite (similarity + recency +
-   * importance). Omit `project` to search across all namespaces.
+   * importance). Omit `project` to search across all namespaces; pass `branch`
+   * to scope to a git branch (native thread) and `tags` to filter by
+   * content type.
    */
   async recall(
     query: string,
     opts: {
       project?: string;
+      branch?: string;
+      tags?: string[];
       k: number;
       threshold?: number;
       reinforce?: boolean;
@@ -165,6 +187,10 @@ export class PluginMemoryStore {
   ): Promise<ScoredMemory[]> {
     const hits = await this.store.recall(query, {
       ...(opts.project !== undefined ? { namespace: opts.project } : {}),
+      ...(opts.branch !== undefined ? { threadId: opts.branch } : {}),
+      ...(opts.tags !== undefined && opts.tags.length > 0
+        ? { tags: opts.tags }
+        : {}),
       k: opts.k,
       ...(opts.threshold !== undefined ? { threshold: opts.threshold } : {}),
       reinforce: opts.reinforce ?? true,

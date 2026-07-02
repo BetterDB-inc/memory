@@ -54,7 +54,7 @@ docker run -d --name betterdb-valkey -p 6379:6379 -v betterdb-valkey-data:/data 
 ### MCP Tools
 
 Claude can use these mid-conversation:
-- `search_context` — Semantic search over past sessions
+- `search_context` — Semantic search over past sessions. Escalates project+branch → project → cross-project, and takes an optional `tags` filter (`decision`, `pattern`, `problem`, `open-thread`)
 - `store_insight` — Save a decision, pattern, or warning
 - `list_open_threads` — Show unresolved items
 - `forget` — Delete a specific memory
@@ -87,7 +87,9 @@ Copy `.env.example` to `.env` and fill in your values before running `bunx @bett
 #### Recall Gating
 
 Recall over-fetches a candidate pool, gates it by relevance, and escalates on a
-miss (project → wider pool → cross-project). `search_context` returns nothing
+miss (project+branch → project → cross-project). Memories are stored with their
+git branch as a native thread scope and content-type tags, so recall can narrow
+to the current branch first and filter by type. `search_context` returns nothing
 only when nothing clears the bar — so a miss is honest, not a silent drop.
 
 The gate is **relative**, not an absolute similarity threshold: embed models
