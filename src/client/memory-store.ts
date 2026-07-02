@@ -12,6 +12,9 @@ import {
   type EpisodicMemory,
 } from "../memory/schema.js";
 import { getValkeyClient } from "./valkey.js";
+import { config } from "../config.js";
+
+const SECONDS_PER_DAY = 86400;
 
 // Store name fixes the index (`betterdb:mem:idx`) and key prefix
 // (`betterdb:mem:{id}`) that @betterdb/agent-memory derives internally.
@@ -135,6 +138,16 @@ export class PluginMemoryStore {
       client,
       name: STORE_NAME,
       embedFn: embed,
+      // Composite-score decay/blend from plugin config. This is the single
+      // time-decay in the system (recency, applied at query time) — there is
+      // no separate importance-aging pass. configRefresh:false keeps these
+      // values fixed rather than letting a Valkey config key override them.
+      halfLifeSeconds: config.recall.halfLifeDays * SECONDS_PER_DAY,
+      weights: {
+        similarity: config.recall.weightSimilarity,
+        recency: config.recall.weightRecency,
+        importance: config.recall.weightImportance,
+      },
       // The plugin owns its own analytics/discovery story; keep the store quiet
       // and offline so it pulls in no posthog/otel network behavior.
       discovery: false,

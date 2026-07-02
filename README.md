@@ -107,6 +107,18 @@ are kept; confidence comes from the scale-independent top-vs-next gap.
 | `BETTERDB_RECALL_POOL_K_WIDE` | `20` | Rung-2/3 over-fetch pool (wider / cross-project) |
 | `BETTERDB_ALLOW_CROSS_PROJECT` | `true` | Allow escalation / `scope="all"` to search across projects |
 
+Ranking within the gated pool uses a composite score (similarity + recency +
+importance), owned by `@betterdb/agent-memory`. Recency is the system's single
+time-decay — a half-life applied at query time, not a stored per-memory aging
+pass. These knobs tune it; defaults match the store's.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTERDB_RECALL_HALF_LIFE_DAYS` | `7` | Age at which a memory's recency term halves |
+| `BETTERDB_RECALL_WEIGHT_SIMILARITY` | `0.6` | Weight of semantic similarity in the composite score |
+| `BETTERDB_RECALL_WEIGHT_RECENCY` | `0.25` | Weight of recency |
+| `BETTERDB_RECALL_WEIGHT_IMPORTANCE` | `0.15` | Weight of stored importance |
+
 #### Model Providers
 
 | Variable | Default | Description |
@@ -137,7 +149,6 @@ Embeddings always work (on-device fallback above). A summarization provider is s
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BETTERDB_DECAY_RATE` | `0.95` | Memory importance decay per day |
 | `BETTERDB_COMPRESS_THRESHOLD` | `0.3` | Importance threshold for compression |
 | `BETTERDB_DISTILL_MIN_SESSIONS` | `5` | Min sessions before knowledge distillation |
 | `BETTERDB_AGING_INTERVAL_HOURS` | `6` | Hours between automatic aging runs |
