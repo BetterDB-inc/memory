@@ -307,6 +307,47 @@ export class PluginMemoryStore {
   }
 
   /**
+   * List memories matching a scope (project namespace, branch thread, and/or
+   * content-type tags) using the SAME native index filter as
+   * {@link forgetByScope} — so a `listByScope` preview is exactly the set a
+   * `forgetByScope` with the same scope would delete. Unlike {@link listMemories}
+   * (which filters summary-derived tags in memory), this queries native tags,
+   * so memories stored before native tagging are matched identically by both.
+   */
+  async listByScope(scope: {
+    project?: string;
+    branch?: string;
+    tags?: string[];
+  }): Promise<EpisodicMemory[]> {
+    const out: EpisodicMemory[] = [];
+    const limit = 100;
+    let offset = 0;
+
+    for (;;) {
+      const { items, total } = await this.store.list({
+        ...(scope.project !== undefined ? { namespace: scope.project } : {}),
+        ...(scope.branch !== undefined ? { threadId: scope.branch } : {}),
+        ...(scope.tags !== undefined && scope.tags.length > 0
+          ? { tags: scope.tags }
+          : {}),
+        limit,
+        offset,
+      });
+      if (items.length === 0) break;
+
+      for (const item of items) {
+        const memory = itemToEpisodic(item);
+        if (memory) out.push(memory);
+      }
+
+      offset += items.length;
+      if (offset >= total) break;
+    }
+
+    return out;
+  }
+
+  /**
    * Merge a selection of memories into one summary memory (and delete the
    * sources). Selection criteria — scope, age, or max importance — are passed
    * through to MemoryStore.consolidate.

@@ -7,7 +7,7 @@ import { createModelClient } from "../client/model.js";
 import { formatSearchResult } from "../memory/retrieval.js";
 import { escalatingRecall } from "../memory/recall.js";
 import { getCwdProject, getGitBranch } from "../memory/capture.js";
-import { config, isConfigured } from "../config.js";
+import { isConfigured } from "../config.js";
 import type { EpisodicMemory, KnowledgeEntry } from "../memory/schema.js";
 
 const SETUP_MESSAGE =
@@ -55,15 +55,14 @@ server.tool(
     const branch = getGitBranch();
     const k = top_k ?? 5;
     // Default (project) scope stays in-project so a miss can *offer* to widen
-    // to all projects — the two-step consent flow. Only an explicit scope="all"
-    // crosses namespaces, and only if cross-project is enabled globally.
-    const allowCrossProject = scope === "all" && config.recall.allowCrossProject;
-
+    // to all projects — the two-step consent flow. An explicit scope="all"
+    // requests the cross-project rung; escalatingRecall still gates it on
+    // BETTERDB_ALLOW_CROSS_PROJECT and flags the miss honestly if it's off.
     const result = await escalatingRecall(store, query, {
       project,
       ...(branch !== "unknown" ? { branch } : {}),
       ...(tags !== undefined ? { tags } : {}),
-      allowCrossProject,
+      crossProjectRequested: scope === "all",
     });
     const formatted = formatSearchResult(query, result, k);
 

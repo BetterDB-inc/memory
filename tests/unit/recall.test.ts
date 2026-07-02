@@ -60,7 +60,7 @@ describe("escalatingRecall", () => {
     const result = await escalatingRecall(asStore(store), "q", {
       project: "memory",
       branch: "main",
-      allowCrossProject: true,
+      crossProjectRequested: true,
     });
 
     expect(result.rung).toBe(1);
@@ -74,6 +74,26 @@ describe("escalatingRecall", () => {
     expect(store.calls[0]?.project).toBe("memory");
     // Rung 1 narrows to the current branch.
     expect(store.calls[0]?.branch).toBe("main");
+    // Over-fetch is speculative and gated afterward, so it must not reinforce
+    // the pre-gate pool.
+    expect(store.calls[0]?.reinforce).toBe(false);
+  });
+
+  test("no rung reinforces the pre-gate over-fetch pool", async () => {
+    // Force all three rungs to run (project rungs miss, cross-project hits).
+    const store = new FakeStore((opts) =>
+      opts.project === undefined ? [scored("elsewhere", 0.6)] : [],
+    );
+    await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      branch: "main",
+      crossProjectRequested: true,
+    });
+
+    expect(store.calls).toHaveLength(3);
+    for (const call of store.calls) {
+      expect(call.reinforce).toBe(false);
+    }
   });
 
   test("rung 2: nothing on this branch; a project-wide hit is recovered", async () => {
@@ -85,7 +105,7 @@ describe("escalatingRecall", () => {
     const result = await escalatingRecall(asStore(store), "q", {
       project: "memory",
       branch: "feature",
-      allowCrossProject: true,
+      crossProjectRequested: true,
     });
 
     expect(result.rung).toBe(2);
@@ -105,7 +125,7 @@ describe("escalatingRecall", () => {
     );
     const result = await escalatingRecall(asStore(store), "q", {
       project: "memory",
-      allowCrossProject: true,
+      crossProjectRequested: true,
     });
 
     expect(result.rung).toBe(3);
@@ -122,7 +142,7 @@ describe("escalatingRecall", () => {
       project: "memory",
       branch: "main",
       tags: ["decision"],
-      allowCrossProject: true,
+      crossProjectRequested: true,
     });
 
     expect(store.calls).toHaveLength(3);
@@ -135,7 +155,7 @@ describe("escalatingRecall", () => {
     const store = new FakeStore(() => []);
     const result = await escalatingRecall(asStore(store), "q", {
       project: "memory",
-      allowCrossProject: false,
+      crossProjectRequested: false,
     });
 
     expect(result.rung).toBe(0);
@@ -161,7 +181,7 @@ describe("escalatingRecall", () => {
     const result = await escalatingRecall(asStore(store), "canary token", {
       project: "memory",
       branch: "main",
-      allowCrossProject: true,
+      crossProjectRequested: true,
     });
 
     expect(result.rung).toBe(1);
@@ -176,7 +196,7 @@ describe("formatSearchResult", () => {
   test("a miss at project scope forbids fabrication and offers cross-project", () => {
     const text = formatSearchResult(
       "canary token",
-      { hits: [], scope: "project", rung: 0, confidence: "none" },
+      { hits: [], scope: "project", rung: 0, confidence: "none", crossProjectBlocked: false },
       5,
     );
     expect(text).toContain("NO memories cleared the relevance threshold");
@@ -188,11 +208,23 @@ describe("formatSearchResult", () => {
   test("a miss at all scope does not offer to widen further", () => {
     const text = formatSearchResult(
       "canary token",
-      { hits: [], scope: "all", rung: 0, confidence: "none" },
+      { hits: [], scope: "all", rung: 0, confidence: "none", crossProjectBlocked: false },
       5,
     );
     expect(text).toContain("this project AND all other projects");
     expect(text).not.toContain('scope="all"');
+  });
+
+  test("a blocked cross-project miss says widening is disabled, not to retry", () => {
+    // scope="all" was requested but BETTERDB_ALLOW_CROSS_PROJECT is off, so only
+    // the project ran. Don't offer a scope="all" retry the config would refuse.
+    const text = formatSearchResult(
+      "canary token",
+      { hits: [], scope: "project", rung: 0, confidence: "none", crossProjectBlocked: true },
+      5,
+    );
+    expect(text).toContain("disabled by configuration");
+    expect(text).not.toContain('search_context again with scope="all"');
   });
 
   test("a hit instructs answering only from the excerpts", () => {
@@ -203,6 +235,7 @@ describe("formatSearchResult", () => {
         scope: "project",
         rung: 1,
         confidence: "high",
+        crossProjectBlocked: false,
       },
       5,
     );
@@ -215,7 +248,7 @@ describe("formatSearchResult", () => {
     const hits = Array.from({ length: 8 }, (_, i) => scored(`mem-${i}`, 0.6));
     const text = formatSearchResult(
       "q",
-      { hits, scope: "project", rung: 1, confidence: "high" },
+      { hits, scope: "project", rung: 1, confidence: "high", crossProjectBlocked: false },
       3,
     );
     expect(text).toContain("3 match(es)");

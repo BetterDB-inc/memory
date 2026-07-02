@@ -75,8 +75,11 @@ export function formatSearchResult(
       result.scope === "all"
         ? "this project AND all other projects"
         : "this project";
-    const offer =
-      result.scope === "project"
+    // Cross-project was asked for but is disabled by config — don't offer a
+    // scope="all" retry the config would also refuse; say so plainly instead.
+    const offer = result.crossProjectBlocked
+      ? ` Cross-project search is disabled by configuration (BETTERDB_ALLOW_CROSS_PROJECT=false), so widening is not available.`
+      : result.scope === "project"
         ? ` You may offer to search across ALL projects — call search_context again with scope="all".`
         : "";
     return [

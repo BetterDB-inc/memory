@@ -19,6 +19,13 @@ export interface RecallResult {
   /** 1: project+branch (or project) · 2: project · 3: cross-project · 0: nothing. */
   rung: 0 | 1 | 2 | 3;
   confidence: "high" | "low" | "none";
+  /**
+   * True on a miss when the caller asked to widen (`crossProjectRequested`) but
+   * `BETTERDB_ALLOW_CROSS_PROJECT` is off, so the cross-project rung never ran.
+   * Lets the formatter say "cross-project is disabled" instead of falsely
+   * offering a scope="all" retry the config would also refuse.
+   */
+  crossProjectBlocked: boolean;
 }
 
 /** Scoping for {@link escalatingRecall}. */
@@ -28,7 +35,13 @@ export interface RecallQuery {
   branch?: string;
   /** Content-type filter (e.g. `["decision"]`) applied at every rung. */
   tags?: string[];
-  allowCrossProject: boolean;
+  /**
+   * Whether the caller wants to widen past the project (user consent / an
+   * explicit scope="all"). The cross-project rung *also* requires
+   * `BETTERDB_ALLOW_CROSS_PROJECT`; when requested but globally disabled the
+   * result is flagged {@link RecallResult.crossProjectBlocked}.
+   */
+  crossProjectRequested: boolean;
 }
 
 interface Gated {
@@ -66,10 +79,13 @@ function storeThreshold(): number {
  *            branch is the most relevant scope; without a branch this is just
  *            project scope.
  *   rung 2 — project, any branch, wider pool `poolKWide`.
- *   rung 3 — cross-project probe (no reinforcement). Only when
- *            `allowCrossProject` — the caller gates this on user consent / an
- *            explicit `scope=all`, since another project's memory is often
- *            noise or privacy-sensitive.
+ *   rung 3 — cross-project probe. Only when the caller requested widening AND
+ *            `BETTERDB_ALLOW_CROSS_PROJECT` is on, since another project's
+ *            memory is often noise or privacy-sensitive.
+ * Every rung is a speculative over-fetch, so all recalls set `reinforce:false`:
+ * the store reinforces its whole returned pool, but the gate then drops most of
+ * it, so reinforcing pre-gate would bump access counts on candidates the user
+ * never sees (and on entire pools of a miss), skewing composite ranking.
  * A `tags` filter, when present, applies at every rung. Stops at the first rung
  * that yields gated hits.
  */
@@ -80,7 +96,9 @@ export async function escalatingRecall(
 ): Promise<RecallResult> {
   const { poolK, poolKWide } = config.recall;
   const threshold = storeThreshold();
-  const { project, branch, tags, allowCrossProject } = q;
+  const { project, branch, tags, crossProjectRequested } = q;
+  const crossProjectEnabled =
+    crossProjectRequested && config.recall.allowCrossProject;
 
   // rung 1 — project + branch (most specific).
   let pool = await store.recall(query, {
@@ -89,22 +107,40 @@ export async function escalatingRecall(
     tags,
     k: poolK,
     threshold,
+    reinforce: false,
   });
   let g = gate(pool);
   if (g.hits.length > 0) {
-    return { hits: g.hits, scope: "project", rung: 1, confidence: g.confidence };
+    return {
+      hits: g.hits,
+      scope: "project",
+      rung: 1,
+      confidence: g.confidence,
+      crossProjectBlocked: false,
+    };
   }
 
   // rung 2 — project, any branch, wider pool.
-  pool = await store.recall(query, { project, tags, k: poolKWide, threshold });
+  pool = await store.recall(query, {
+    project,
+    tags,
+    k: poolKWide,
+    threshold,
+    reinforce: false,
+  });
   g = gate(pool);
   if (g.hits.length > 0) {
-    return { hits: g.hits, scope: "project", rung: 2, confidence: g.confidence };
+    return {
+      hits: g.hits,
+      scope: "project",
+      rung: 2,
+      confidence: g.confidence,
+      crossProjectBlocked: false,
+    };
   }
 
-  // rung 3 — cross-project probe. reinforce:false so a speculative wide search
-  // doesn't bump access counts on unrelated projects' memories.
-  if (allowCrossProject) {
+  // rung 3 — cross-project probe.
+  if (crossProjectEnabled) {
     pool = await store.recall(query, {
       tags,
       k: poolKWide,
@@ -113,14 +149,21 @@ export async function escalatingRecall(
     });
     g = gate(pool);
     if (g.hits.length > 0) {
-      return { hits: g.hits, scope: "all", rung: 3, confidence: g.confidence };
+      return {
+        hits: g.hits,
+        scope: "all",
+        rung: 3,
+        confidence: g.confidence,
+        crossProjectBlocked: false,
+      };
     }
   }
 
   return {
     hits: [],
-    scope: allowCrossProject ? "all" : "project",
+    scope: crossProjectEnabled ? "all" : "project",
     rung: 0,
     confidence: "none",
+    crossProjectBlocked: crossProjectRequested && !config.recall.allowCrossProject,
   };
 }

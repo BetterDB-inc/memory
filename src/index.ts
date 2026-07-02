@@ -489,7 +489,7 @@ async function runForget(argv: string[]) {
   const tags = flag("tags")?.split(",").map((t) => t.trim()).filter(Boolean);
 
   const { getValkeyClient } = await import("./client/valkey.js");
-  const { getPluginMemoryStore, memoryTags } = await import("./client/memory-store.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
   const { getCwdProject } = await import("./memory/capture.js");
 
   const project = allProjects ? undefined : (flag("project") ?? getCwdProject());
@@ -510,15 +510,16 @@ async function runForget(argv: string[]) {
   const valkeyClient = await getValkeyClient();
   const store = await getPluginMemoryStore();
 
-  // Dry-run count: list the project's memories and match branch/tags in-memory.
-  const candidates = (await store.listMemories(project)).filter((m) => {
-    if (branch !== undefined && m.branch !== branch) return false;
-    if (tags && tags.length > 0) {
-      const mt = memoryTags(m);
-      if (!tags.some((t) => mt.includes(t))) return false;
-    }
-    return true;
-  });
+  const scope = {
+    ...(project !== undefined ? { project } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(tags && tags.length > 0 ? { tags } : {}),
+  };
+
+  // Preview through the SAME native scope filter forgetByScope deletes with, so
+  // the dry-run count is exactly what --apply will remove (older memories
+  // without native tags are matched identically by both paths).
+  const candidates = await store.listByScope(scope);
 
   console.log(`Matched ${candidates.length} memories.`);
   for (const m of candidates.slice(0, 5)) {
@@ -533,11 +534,7 @@ async function runForget(argv: string[]) {
     return;
   }
 
-  const deleted = await store.forgetByScope({
-    ...(project !== undefined ? { project } : {}),
-    ...(branch !== undefined ? { branch } : {}),
-    ...(tags && tags.length > 0 ? { tags } : {}),
-  });
+  const deleted = await store.forgetByScope(scope);
   console.log(`\nDeleted ${deleted} memories.`);
 
   await store.close();

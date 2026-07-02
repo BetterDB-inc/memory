@@ -50,7 +50,7 @@ runHook(async () => {
   const result = await escalatingRecall(store, queryContext, {
     project,
     ...(branch !== "unknown" ? { branch } : {}),
-    allowCrossProject: false,
+    crossProjectRequested: false,
   });
   const memories = result.hits
     .slice(0, config.memory.maxContextMemories)
