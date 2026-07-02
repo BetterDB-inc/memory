@@ -68,15 +68,18 @@ describe("escalatingRecall", () => {
     expect(store.calls[0]?.project).toBe("memory");
   });
 
-  test("rung 2: nothing above the high bar, something above the low bar", async () => {
+  test("rung 2: the narrow pool is all noise; the wider pool surfaces a hit", async () => {
+    // Rungs 1 and 2 share the same relative gate — only the pool width differs.
+    // The narrow pool (k=10) returns only sub-floor noise; the wider pool (k=20)
+    // reaches an above-floor memory, so escalation recovers it at rung 2.
     const store = new FakeStore((opts) =>
-      opts.k >= 20 ? [scored("weak", 0.4)] : [scored("tooWeak", 0.4)],
+      opts.k >= 20 ? [scored("recovered", 0.6)] : [scored("noise", 0.2)],
     );
     const result = await escalatingRecall(asStore(store), "q", "memory", true);
 
     expect(result.rung).toBe(2);
-    expect(result.confidence).toBe("low");
     expect(result.scope).toBe("project");
+    expect(result.hits).toHaveLength(1);
     expect(store.calls).toHaveLength(2);
     expect(store.calls[1]?.k).toBe(20);
   });

@@ -90,11 +90,18 @@ Recall over-fetches a candidate pool, gates it by relevance, and escalates on a
 miss (project → wider pool → cross-project). `search_context` returns nothing
 only when nothing clears the bar — so a miss is honest, not a silent drop.
 
+The gate is **relative**, not an absolute similarity threshold: embed models
+compress cosine similarity into different, narrow bands (mxbai-embed-large packs
+everything into ~0.7–0.88), so a fixed threshold doesn't transfer across models.
+Instead, `floor` drops genuine noise, and hits within `margin` of the top match
+are kept; confidence comes from the scale-independent top-vs-next gap.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BETTERDB_RECALL_TAU_HIGH` | `0.55` | Cosine-similarity bar for a confident (rung-1) match |
-| `BETTERDB_RECALL_TAU_LOW` | `0.35` | Bar for a weak-but-usable (rung-2/3) match |
-| `BETTERDB_RECALL_POOL_K` | `10` | Rung-1 over-fetch pool (project, high bar) |
+| `BETTERDB_RECALL_FLOOR` | `0.5` | Similarity floor — drops noise and loosens the store's own distance gate |
+| `BETTERDB_RECALL_MARGIN` | `0.05` | Keep hits within this similarity of the top match |
+| `BETTERDB_RECALL_SEPARATION` | `0.04` | Top-vs-next gap above which a match is "high" confidence |
+| `BETTERDB_RECALL_POOL_K` | `10` | Rung-1 over-fetch pool (project) |
 | `BETTERDB_RECALL_POOL_K_WIDE` | `20` | Rung-2/3 over-fetch pool (wider / cross-project) |
 | `BETTERDB_ALLOW_CROSS_PROJECT` | `true` | Allow escalation / `scope="all"` to search across projects |
 

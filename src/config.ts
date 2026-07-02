@@ -53,11 +53,15 @@ export const config = {
     agingIntervalHours: Number(env("BETTERDB_AGING_INTERVAL_HOURS") ?? 6),
   },
   recall: {
-    // Cosine-similarity confidence gates (0..1). Calibrate against the
-    // LongMemEval harness — highest tau that keeps recall@k at baseline.
-    tauHigh: Number(env("BETTERDB_RECALL_TAU_HIGH") ?? 0.55),
-    tauLow: Number(env("BETTERDB_RECALL_TAU_LOW") ?? 0.35),
-    // Over-fetch pool sizes: rung-1 (project, high bar) and rung-2/3 (wider).
+    // Relative gate — model-agnostic (embed models compress cosine similarity
+    // into different bands, so absolute thresholds don't transfer). `floor`
+    // drops genuine noise and loosens the store's own distance gate; `margin`
+    // keeps hits within that similarity of the top match; `separation` is the
+    // top-vs-next gap above which a result is "high" confidence.
+    floor: Number(env("BETTERDB_RECALL_FLOOR") ?? 0.5),
+    margin: Number(env("BETTERDB_RECALL_MARGIN") ?? 0.05),
+    separation: Number(env("BETTERDB_RECALL_SEPARATION") ?? 0.04),
+    // Over-fetch pool sizes: rung-1 (project) and rung-2/3 (wider / cross).
     poolK: Number(env("BETTERDB_RECALL_POOL_K") ?? 10),
     poolKWide: Number(env("BETTERDB_RECALL_POOL_K_WIDE") ?? 20),
     // Allow the ladder / search_context to fall back to cross-project scope.
