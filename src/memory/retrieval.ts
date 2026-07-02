@@ -23,6 +23,9 @@ export function formatForInjection(memories: EpisodicMemory[]): string {
     for (const d of m.summary.decisions) {
       sections.push(`  - Decision: ${d}`);
     }
+    for (const pat of m.summary.patterns) {
+      sections.push(`  - Pattern: ${pat}`);
+    }
     for (const p of m.summary.problemsSolved) {
       sections.push(`  - Solved: ${p.problem} → ${p.resolution}`);
     }
@@ -52,6 +55,7 @@ export function formatForInjection(memories: EpisodicMemory[]): string {
 function detailLines(m: EpisodicMemory): string[] {
   const lines: string[] = [];
   for (const d of m.summary.decisions) lines.push(`    - Decision: ${d}`);
+  for (const pat of m.summary.patterns) lines.push(`    - Pattern: ${pat}`);
   for (const p of m.summary.problemsSolved) {
     lines.push(`    - Solved: ${p.problem} → ${p.resolution}`);
   }

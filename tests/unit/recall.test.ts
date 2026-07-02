@@ -244,6 +244,31 @@ describe("formatSearchResult", () => {
     expect(text).toContain("Answer the user ONLY from these excerpts");
   });
 
+  test("a hit's excerpt includes every content type it was tagged with", () => {
+    // A pattern-tagged memory must surface its pattern text, or a pattern-
+    // filtered search returns a hit whose excerpt can't answer the query.
+    const memory = makeMemory("mixed session");
+    memory.summary.decisions = ["Adopt Bun"];
+    memory.summary.patterns = ["Escalating recall ladder"];
+    memory.summary.problemsSolved = [{ problem: "Slow KNN", resolution: "Over-fetch + gate" }];
+    memory.summary.openThreads = ["Reconcile aging decay"];
+    const text = formatSearchResult(
+      "q",
+      {
+        hits: [{ memory, relevance: 0.7, score: 0.7 }],
+        scope: "project",
+        rung: 1,
+        confidence: "high",
+        crossProjectBlocked: false,
+      },
+      5,
+    );
+    expect(text).toContain("Decision: Adopt Bun");
+    expect(text).toContain("Pattern: Escalating recall ladder");
+    expect(text).toContain("Solved: Slow KNN → Over-fetch + gate");
+    expect(text).toContain("Open: Reconcile aging decay");
+  });
+
   test("top_k caps how many hits are shown", () => {
     const hits = Array.from({ length: 8 }, (_, i) => scored(`mem-${i}`, 0.6));
     const text = formatSearchResult(
