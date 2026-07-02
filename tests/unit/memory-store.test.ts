@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { MemoryItem } from "@betterdb/agent-memory";
 import {
+  buildEmbedText,
   episodicToSource,
   itemToEpisodic,
+  memoryTags,
 } from "../../src/client/memory-store.js";
 import type { EpisodicMemory } from "../../src/memory/schema.js";
 
@@ -129,5 +131,59 @@ describe("episodicToSource / itemToEpisodic round-trip", () => {
     // Corrupt the stashed payload so importanceScore ends up out of range.
     const item = makeItem(memory, { importance: 5 });
     expect(itemToEpisodic(item)).toBeNull();
+  });
+});
+
+describe("buildEmbedText", () => {
+  test("folds structured detail into the embedded text", () => {
+    const text = buildEmbedText(makeMemory());
+    expect(text).toContain("Test session");
+    expect(text).toContain("Decisions: Use TypeScript");
+    expect(text).toContain("Patterns: Factory pattern");
+    expect(text).toContain("Problems solved: Bug → Fixed");
+    expect(text).toContain("Open threads: Optimize queries");
+  });
+
+  test("omits filesChanged (bare paths are generic noise)", () => {
+    expect(buildEmbedText(makeMemory())).not.toContain("/src/db.ts");
+  });
+
+  test("a bare one-liner embeds as just that line", () => {
+    const memory = makeMemory({
+      summary: {
+        decisions: [],
+        patterns: [],
+        problemsSolved: [],
+        openThreads: [],
+        filesChanged: [],
+        oneLineSummary: "Just a summary",
+      },
+    });
+    expect(buildEmbedText(memory)).toBe("Just a summary");
+  });
+});
+
+describe("memoryTags", () => {
+  test("tags each populated content type", () => {
+    expect(memoryTags(makeMemory())).toEqual([
+      "decision",
+      "pattern",
+      "problem",
+      "open-thread",
+    ]);
+  });
+
+  test("no tags when only a one-liner is present", () => {
+    const memory = makeMemory({
+      summary: {
+        decisions: [],
+        patterns: [],
+        problemsSolved: [],
+        openThreads: [],
+        filesChanged: [],
+        oneLineSummary: "Nothing structured",
+      },
+    });
+    expect(memoryTags(memory)).toEqual([]);
   });
 });

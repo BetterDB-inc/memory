@@ -1,0 +1,14 @@
+FROM valkey/valkey-bundle:9 AS base
+
+FROM base AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git cmake ninja-build make clang g++ libstdc++-14-dev libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/valkey-search
+RUN git clone --branch 1.2.0 --recurse-submodules --shallow-submodules \
+    https://github.com/valkey-io/valkey-search.git . && \
+    ./build.sh
+
+FROM base
+COPY --from=build /opt/valkey-search/.build-release/libsearch.so /usr/lib/valkey/libsearch.so

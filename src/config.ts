@@ -46,11 +46,34 @@ export const config = {
   },
   memory: {
     maxContextMemories: Number(env("BETTERDB_MAX_CONTEXT_MEMORIES") ?? 5),
-    decayRate: Number(env("BETTERDB_DECAY_RATE") ?? 0.95),
     compressThreshold: Number(env("BETTERDB_COMPRESS_THRESHOLD") ?? 0.3),
     distillMinSessions: Number(env("BETTERDB_DISTILL_MIN_SESSIONS") ?? 5),
     contextFile: env("BETTERDB_CONTEXT_FILE") ?? ".betterdb_context.md",
     agingIntervalHours: Number(env("BETTERDB_AGING_INTERVAL_HOURS") ?? 6),
+  },
+  recall: {
+    // Relative gate — model-agnostic (embed models compress cosine similarity
+    // into different bands, so absolute thresholds don't transfer). `floor`
+    // drops genuine noise and loosens the store's own distance gate; `margin`
+    // keeps hits within that similarity of the top match; `separation` is the
+    // top-vs-next gap above which a result is "high" confidence.
+    floor: Number(env("BETTERDB_RECALL_FLOOR") ?? 0.5),
+    margin: Number(env("BETTERDB_RECALL_MARGIN") ?? 0.05),
+    separation: Number(env("BETTERDB_RECALL_SEPARATION") ?? 0.04),
+    // Over-fetch pool sizes: rung-1 (project) and rung-2/3 (wider / cross).
+    poolK: Number(env("BETTERDB_RECALL_POOL_K") ?? 10),
+    poolKWide: Number(env("BETTERDB_RECALL_POOL_K_WIDE") ?? 20),
+    // Allow the ladder / search_context to fall back to cross-project scope.
+    allowCrossProject: env("BETTERDB_ALLOW_CROSS_PROJECT") !== "false",
+    // Composite recall scoring, owned by @betterdb/agent-memory: a weighted
+    // blend of semantic similarity, recency (half-life decay), and importance.
+    // Recency is the ONE time-decay in the system — it replaces the old, unused
+    // per-day `decayRate`. `halfLifeDays` is the age at which a memory's recency
+    // term halves; weights (defaults match the store's) blend the three terms.
+    halfLifeDays: Number(env("BETTERDB_RECALL_HALF_LIFE_DAYS") ?? 7),
+    weightSimilarity: Number(env("BETTERDB_RECALL_WEIGHT_SIMILARITY") ?? 0.6),
+    weightRecency: Number(env("BETTERDB_RECALL_WEIGHT_RECENCY") ?? 0.25),
+    weightImportance: Number(env("BETTERDB_RECALL_WEIGHT_IMPORTANCE") ?? 0.15),
   },
   allowRemoteFallback: env("BETTERDB_ALLOW_REMOTE_FALLBACK") !== "false",
   providers: {

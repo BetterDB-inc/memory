@@ -54,7 +54,7 @@ docker run -d --name betterdb-valkey -p 6379:6379 -v betterdb-valkey-data:/data 
 ### MCP Tools
 
 Claude can use these mid-conversation:
-- `search_context` — Semantic search over past sessions
+- `search_context` — Semantic search over past sessions. Escalates project+branch → project → cross-project, and takes an optional `tags` filter (`decision`, `pattern`, `problem`, `open-thread`)
 - `store_insight` — Save a decision, pattern, or warning
 - `list_open_threads` — Show unresolved items
 - `forget` — Delete a specific memory
@@ -63,9 +63,11 @@ Claude can use these mid-conversation:
 
 ```bash
 bunx @betterdb/memory install        # Set up hooks + MCP server
-bunx @betterdb/memory status         # Check health
+bunx @betterdb/memory status         # Check health + recall scoring config
 bunx @betterdb/memory uninstall      # Remove everything
 bunx @betterdb/memory maintain       # Run aging/compression manually
+bunx @betterdb/memory forget         # Bulk-delete by scope (dry run; --apply to delete)
+                                     #   --project <name> | --all-projects --branch <b> --tags <a,b>
 bunx @betterdb/memory docker-valkey  # Manage Docker Valkey container
 ```
 
@@ -80,9 +82,44 @@ Copy `.env.example` to `.env` and fill in your values before running `bunx @bett
 | `BETTERDB_VALKEY_URL` | `redis://localhost:6379` | Valkey connection URL |
 | `BETTERDB_VALKEY_INDEX_NAME` | `betterdb-memory-index` | Valkey search index name |
 | `BETTERDB_EMBED_DIM` | `1024` | Embedding dimensions |
-| `BETTERDB_MAX_CONTEXT_MEMORIES` | `5` | Memories injected per session |
+| `BETTERDB_MAX_CONTEXT_MEMORIES` | `5` | Max memories injected per session (after gating) |
 | `BETTERDB_CONTEXT_FILE` | `.betterdb_context.md` | Context injection file |
 | `BETTERDB_ALLOW_REMOTE_FALLBACK` | `true` | Fall back to remote APIs if local models unavailable |
+
+#### Recall Gating
+
+Recall over-fetches a candidate pool, gates it by relevance, and escalates on a
+miss (project+branch → project → cross-project). Memories are stored with their
+git branch as a native thread scope and content-type tags, so recall can narrow
+to the current branch first and filter by type. `search_context` returns nothing
+only when nothing clears the bar — so a miss is honest, not a silent drop.
+
+The gate is **relative**, not an absolute similarity threshold: embed models
+compress cosine similarity into different, narrow bands (mxbai-embed-large packs
+everything into ~0.7–0.88), so a fixed threshold doesn't transfer across models.
+Instead, `floor` drops genuine noise, and hits within `margin` of the top match
+are kept; confidence comes from the scale-independent top-vs-next gap.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTERDB_RECALL_FLOOR` | `0.5` | Similarity floor — drops noise and loosens the store's own distance gate |
+| `BETTERDB_RECALL_MARGIN` | `0.05` | Keep hits within this similarity of the top match |
+| `BETTERDB_RECALL_SEPARATION` | `0.04` | Top-vs-next gap above which a match is "high" confidence |
+| `BETTERDB_RECALL_POOL_K` | `10` | Rung-1 over-fetch pool (project) |
+| `BETTERDB_RECALL_POOL_K_WIDE` | `20` | Rung-2/3 over-fetch pool (wider / cross-project) |
+| `BETTERDB_ALLOW_CROSS_PROJECT` | `true` | Allow escalation / `scope="all"` to search across projects |
+
+Ranking within the gated pool uses a composite score (similarity + recency +
+importance), owned by `@betterdb/agent-memory`. Recency is the system's single
+time-decay — a half-life applied at query time, not a stored per-memory aging
+pass. These knobs tune it; defaults match the store's.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTERDB_RECALL_HALF_LIFE_DAYS` | `7` | Age at which a memory's recency term halves |
+| `BETTERDB_RECALL_WEIGHT_SIMILARITY` | `0.6` | Weight of semantic similarity in the composite score |
+| `BETTERDB_RECALL_WEIGHT_RECENCY` | `0.25` | Weight of recency |
+| `BETTERDB_RECALL_WEIGHT_IMPORTANCE` | `0.15` | Weight of stored importance |
 
 #### Model Providers
 
@@ -114,7 +151,6 @@ Embeddings always work (on-device fallback above). A summarization provider is s
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BETTERDB_DECAY_RATE` | `0.95` | Memory importance decay per day |
 | `BETTERDB_COMPRESS_THRESHOLD` | `0.3` | Importance threshold for compression |
 | `BETTERDB_DISTILL_MIN_SESSIONS` | `5` | Min sessions before knowledge distillation |
 | `BETTERDB_AGING_INTERVAL_HOURS` | `6` | Hours between automatic aging runs |

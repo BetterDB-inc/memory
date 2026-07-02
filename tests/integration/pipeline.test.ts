@@ -70,8 +70,9 @@ describe.skipIf(SKIP)("End-to-end pipeline", () => {
     expect(retrieved!.summary.oneLineSummary).toBe("Set up database layer with Valkey");
     expect(retrieved!.importanceScore).toBe(importance);
 
-    // 4. Simulate decay (manual score reduction)
-    const decayedScore = importance * Math.pow(config.memory.decayRate, 10); // 10 days
+    // 4. Simulate decay (manual score reduction) — exercises the legacy
+    // updateImportance path; the factor is arbitrary, not a real decay knob.
+    const decayedScore = importance * Math.pow(0.95, 10); // 10 days
     await client.updateImportance(memory.memoryId, decayedScore);
 
     const afterDecay = await client.getMemory(memory.memoryId);
