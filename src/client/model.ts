@@ -1,5 +1,6 @@
 import { Ollama } from "ollama";
 import { config } from "../config.js";
+import { groundSummary } from "../memory/grounding.js";
 import type { SessionSummary } from "../memory/schema.js";
 
 // --- Model Presets ---
@@ -63,8 +64,14 @@ export class CompositeModelClient implements ModelClient {
     return this.embedClient.embed(text);
   }
 
-  summarize(transcript: string): Promise<SessionSummary> {
-    return this.summarizeClient.summarize(transcript);
+  /**
+   * Every summarize call funnels through here, so this is where extraction is
+   * grounded: decisions/problemsSolved whose supporting quote is not found
+   * verbatim in the transcript are dropped (see memory/grounding.ts).
+   */
+  async summarize(transcript: string): Promise<SessionSummary> {
+    const raw = await this.summarizeClient.summarize(transcript);
+    return groundSummary(raw, transcript);
   }
 
   get embedDim(): number {

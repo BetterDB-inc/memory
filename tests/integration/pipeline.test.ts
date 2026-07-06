@@ -38,7 +38,7 @@ describe.skipIf(SKIP)("End-to-end pipeline", () => {
   test("store → retrieve → decay cycle", async () => {
     // 1. Build a memory with a computed importance
     const summary = {
-      decisions: ["Use Valkey"],
+      decisions: [{ text: "Use Valkey", status: "done" as const }],
       patterns: ["Repository pattern"],
       problemsSolved: [{ problem: "Slow queries", resolution: "Added index" }],
       openThreads: ["Consider caching"],

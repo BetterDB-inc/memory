@@ -14,7 +14,7 @@ const makeMemory = (overrides: Partial<EpisodicMemory> = {}): EpisodicMemory => 
   branch: "main",
   timestamp: "2025-01-01T00:00:00.000Z",
   summary: {
-    decisions: ["Use TypeScript"],
+    decisions: [{ text: "Use TypeScript", status: "done" as const }],
     patterns: ["Factory pattern"],
     problemsSolved: [{ problem: "Bug", resolution: "Fixed" }],
     openThreads: ["Optimize queries"],

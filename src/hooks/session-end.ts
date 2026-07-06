@@ -9,6 +9,7 @@ import {
   getCwdProject,
 } from "../memory/capture.js";
 import { SessionEventSchema, type EpisodicMemory } from "../memory/schema.js";
+import { selectTranscript, type TranscriptTurn } from "../memory/transcript.js";
 import { config, isConfigured } from "../config.js";
 import { unlink } from "node:fs/promises";
 
@@ -37,15 +38,17 @@ runHook(async () => {
   }
 
   const eventFilePath = `/tmp/betterdb-${sessionId}.jsonl`;
-  let transcript = "";
+  let turns: TranscriptTurn[] = [];
 
   // Prefer transcript_path — contains the full conversation including user messages
   if (transcriptPath) {
-    transcript = await parseTranscriptPath(transcriptPath);
+    turns = await parseTranscriptTurns(transcriptPath);
   }
 
-  // Fall back to JSONL event file (tool calls captured by PostToolUse hook)
-  if (!transcript) {
+  // Fall back to JSONL event file (tool calls captured by PostToolUse hook).
+  // Event lines rank as tool turns; with no user turns present the selector
+  // keeps them, so a tool-only fallback transcript is never emptied.
+  if (turns.length === 0) {
     const eventFile = Bun.file(eventFilePath);
     if (await eventFile.exists()) {
       const raw = await eventFile.text();
@@ -58,25 +61,24 @@ runHook(async () => {
           // Skip malformed lines
         }
       }
-      transcript = capture.buildTranscript();
+      turns = capture
+        .buildTranscript()
+        .split("\n")
+        .filter(Boolean)
+        .map((text) => ({ role: "tool" as const, text }));
     }
   }
+
+  // Cap to ~8K chars for the summarizer via priority-based selection (user
+  // turns > assistant turns near user turns > tool lines) instead of the old
+  // head+tail slice, which dropped the middle of long sessions wholesale.
+  const MAX_TRANSCRIPT = 8000;
+  const transcript = selectTranscript(turns, MAX_TRANSCRIPT);
 
   // Nothing to store
   if (!transcript || transcript.length < 20) {
     await cleanup(eventFilePath);
     return;
-  }
-
-  // Cap transcript to ~8K chars to avoid overwhelming the summarizer
-  // Keep first 4K (session start) + last 4K (session end) for long sessions
-  const MAX_TRANSCRIPT = 8000;
-  if (transcript.length > MAX_TRANSCRIPT) {
-    const half = MAX_TRANSCRIPT / 2;
-    transcript =
-      transcript.slice(0, half) +
-      "\n\n[... middle of session truncated ...]\n\n" +
-      transcript.slice(-half);
   }
 
   let valkeyClient;
@@ -131,16 +133,16 @@ runHook(async () => {
 });
 
 /**
- * Parse Claude Code's transcript JSONL into a clean text transcript.
+ * Parse Claude Code's transcript JSONL into role-tagged turns.
  * The JSONL contains objects with type: "user" | "assistant" and message content.
- * We extract user/assistant turns to build a readable conversation.
+ * We extract user/assistant/tool turns so selectTranscript can rank them.
  */
-async function parseTranscriptPath(path: string): Promise<string> {
+async function parseTranscriptTurns(path: string): Promise<TranscriptTurn[]> {
   const file = Bun.file(path);
-  if (!(await file.exists())) return "";
+  if (!(await file.exists())) return [];
 
   const raw = await file.text();
-  const lines: string[] = [];
+  const turns: TranscriptTurn[] = [];
 
   for (const line of raw.split("\n").filter(Boolean)) {
     try {
@@ -157,7 +159,7 @@ async function parseTranscriptPath(path: string): Promise<string> {
               : "";
         // Skip system-generated messages (commands, caveats)
         if (content && !content.includes("<local-command") && !content.includes("<command-name>")) {
-          lines.push(`User: ${content}`);
+          turns.push({ role: "user", text: `User: ${content}` });
         }
       } else if (entry.type === "assistant" && entry.message?.content) {
         const content =
@@ -170,13 +172,13 @@ async function parseTranscriptPath(path: string): Promise<string> {
                   .join("\n")
               : "";
         if (content) {
-          lines.push(`Assistant: ${content.slice(0, 2000)}`);
+          turns.push({ role: "assistant", text: `Assistant: ${content.slice(0, 2000)}` });
         }
       } else if (entry.type === "tool_use" || entry.type === "tool_result") {
         // Include tool names for context but keep it brief
         const toolName = entry.tool_name ?? entry.name ?? "";
         if (toolName) {
-          lines.push(`Tool: ${toolName}`);
+          turns.push({ role: "tool", text: `Tool: ${toolName}` });
         }
       }
     } catch {
@@ -184,7 +186,7 @@ async function parseTranscriptPath(path: string): Promise<string> {
     }
   }
 
-  return lines.join("\n");
+  return turns;
 }
 
 async function cleanup(eventFilePath: string): Promise<void> {

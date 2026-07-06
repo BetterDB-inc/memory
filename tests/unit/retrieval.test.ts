@@ -8,7 +8,7 @@ const makeMemory = (overrides: Partial<EpisodicMemory> = {}): EpisodicMemory => 
   branch: "main",
   timestamp: "2025-01-01T00:00:00.000Z",
   summary: {
-    decisions: ["Use TypeScript"],
+    decisions: [{ text: "Use TypeScript", status: "done" as const }],
     patterns: ["Factory pattern"],
     problemsSolved: [{ problem: "Bug", resolution: "Fixed" }],
     openThreads: ["Optimize queries"],
@@ -40,6 +40,21 @@ describe("formatForInjection", () => {
   test("includes decisions inline", () => {
     const result = formatForInjection([makeMemory()]);
     expect(result).toContain("Decision: Use TypeScript");
+  });
+
+  test("labels non-done decisions with their status", () => {
+    const memory = makeMemory();
+    memory.summary.decisions = [
+      { text: "Ship it", status: "done" },
+      { text: "Use Postgres", status: "rejected" },
+      { text: "Add threadId arrays", status: "proposed" },
+      { text: "Pick an embed model", status: "open" },
+    ];
+    const result = formatForInjection([memory]);
+    expect(result).toContain("Decision: Ship it");
+    expect(result).toContain("Decision (rejected): Use Postgres");
+    expect(result).toContain("Decision (proposed): Add threadId arrays");
+    expect(result).toContain("Decision (open): Pick an embed model");
   });
 
   test("includes solved problems inline", () => {

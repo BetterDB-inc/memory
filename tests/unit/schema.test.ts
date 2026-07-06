@@ -61,7 +61,7 @@ describe("SessionSummarySchema", () => {
 
   test("parses full summary", () => {
     const result = SessionSummarySchema.parse({
-      decisions: ["Use Valkey for storage"],
+      decisions: [{ text: "Use Valkey for storage", status: "done" }],
       patterns: ["Factory pattern"],
       problemsSolved: [{ problem: "Connection", resolution: "Retry logic" }],
       openThreads: ["Optimize queries"],
@@ -70,6 +70,38 @@ describe("SessionSummarySchema", () => {
     });
     expect(result.decisions).toHaveLength(1);
     expect(result.problemsSolved[0]?.problem).toBe("Connection");
+  });
+
+  test("coerces legacy string decisions to done-status objects", () => {
+    // Memories stored before 0.5.0 carry decisions as plain strings; they must
+    // keep parsing so old data stays readable.
+    const result = SessionSummarySchema.parse({
+      decisions: ["Use Valkey for storage"],
+    });
+    expect(result.decisions).toEqual([
+      { text: "Use Valkey for storage", status: "done" },
+    ]);
+  });
+
+  test("status defaults to done and rejects unknown statuses", () => {
+    const result = SessionSummarySchema.parse({
+      decisions: [{ text: "no status given" }],
+    });
+    expect(result.decisions[0]?.status).toBe("done");
+    expect(() =>
+      SessionSummarySchema.parse({
+        decisions: [{ text: "bad", status: "maybe" }],
+      }),
+    ).toThrow();
+  });
+
+  test("accepts an optional quote on decisions and problemsSolved", () => {
+    const result = SessionSummarySchema.parse({
+      decisions: [{ text: "d", status: "proposed", quote: "we could do d" }],
+      problemsSolved: [{ problem: "p", resolution: "r", quote: "fixed p via r" }],
+    });
+    expect(result.decisions[0]?.quote).toBe("we could do d");
+    expect(result.problemsSolved[0]?.quote).toBe("fixed p via r");
   });
 
   test("enforces max array lengths", () => {

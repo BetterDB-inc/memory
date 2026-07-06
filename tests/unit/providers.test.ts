@@ -59,9 +59,14 @@ describe("CompositeModelClient", () => {
       preset: { embedModel: "n/a", summarizeModel: "test-summarize", embedDim: 0 },
       summarize: async (transcript) => {
         summarizeCalled = true;
-        expect(transcript).toBe("test transcript");
+        expect(transcript).toBe("test transcript with enough content");
         return {
-          decisions: ["d1"],
+          decisions: [
+            // Grounded: quote appears verbatim in the transcript.
+            { text: "d1", status: "done" as const, quote: "transcript with enough" },
+            // Ungrounded: no such quote — the composite's grounding drops it.
+            { text: "d2", status: "done" as const, quote: "fabricated evidence here" },
+          ],
           patterns: [],
           problemsSolved: [],
           openThreads: [],
@@ -72,11 +77,12 @@ describe("CompositeModelClient", () => {
     });
 
     const composite = new CompositeModelClient(embedClient, summarizeClient);
-    const result = await composite.summarize("test transcript");
+    const result = await composite.summarize("test transcript with enough content");
 
     expect(summarizeCalled).toBe(true);
     expect(result.oneLineSummary).toBe("Custom summary");
-    expect(result.decisions).toEqual(["d1"]);
+    // Grounding kept only the quoted decision and stripped its quote.
+    expect(result.decisions).toEqual([{ text: "d1", status: "done" }]);
   });
 
   test("embedDim comes from embedClient", () => {

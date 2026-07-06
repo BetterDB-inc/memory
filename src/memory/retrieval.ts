@@ -1,5 +1,11 @@
-import type { EpisodicMemory } from "./schema.js";
+import type { Decision, EpisodicMemory } from "./schema.js";
 import type { RecallResult } from "./recall.js";
+
+/** "Decision:" for made decisions; "Decision (proposed):" etc. otherwise, so
+ * readers never mistake a discussed option for something that was done. */
+function decisionLabel(d: Decision): string {
+  return d.status === "done" ? "Decision" : `Decision (${d.status})`;
+}
 
 // Recall (KNN + composite recency/importance scoring + access reinforcement)
 // now lives in @betterdb/agent-memory's MemoryStore, reached via
@@ -21,7 +27,7 @@ export function formatForInjection(memories: EpisodicMemory[]): string {
     const date = m.timestamp.split("T")[0];
     sections.push(`- **[${date}]** ${m.summary.oneLineSummary}`);
     for (const d of m.summary.decisions) {
-      sections.push(`  - Decision: ${d}`);
+      sections.push(`  - ${decisionLabel(d)}: ${d.text}`);
     }
     for (const pat of m.summary.patterns) {
       sections.push(`  - Pattern: ${pat}`);
@@ -54,7 +60,9 @@ export function formatForInjection(memories: EpisodicMemory[]): string {
 
 function detailLines(m: EpisodicMemory): string[] {
   const lines: string[] = [];
-  for (const d of m.summary.decisions) lines.push(`    - Decision: ${d}`);
+  for (const d of m.summary.decisions) {
+    lines.push(`    - ${decisionLabel(d)}: ${d.text}`);
+  }
   for (const pat of m.summary.patterns) lines.push(`    - Pattern: ${pat}`);
   for (const p of m.summary.problemsSolved) {
     lines.push(`    - Solved: ${p.problem} → ${p.resolution}`);

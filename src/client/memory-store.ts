@@ -83,7 +83,14 @@ export function memoryTags(memory: EpisodicMemory): string[] {
 export function buildEmbedText(memory: EpisodicMemory): string {
   const s = memory.summary;
   const parts: string[] = [s.oneLineSummary];
-  if (s.decisions.length > 0) parts.push(`Decisions: ${s.decisions.join("; ")}`);
+  if (s.decisions.length > 0) {
+    // Prefix non-made decisions with their status so the vector reflects the
+    // provenance too (a rejected option should not embed like a done decision).
+    const decisions = s.decisions
+      .map((d) => (d.status === "done" ? d.text : `(${d.status}) ${d.text}`))
+      .join("; ");
+    parts.push(`Decisions: ${decisions}`);
+  }
   if (s.patterns.length > 0) parts.push(`Patterns: ${s.patterns.join("; ")}`);
   if (s.problemsSolved.length > 0) {
     const solved = s.problemsSolved
