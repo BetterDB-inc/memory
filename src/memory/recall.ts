@@ -13,6 +13,13 @@ import type { PluginMemoryStore, ScoredMemory } from "../client/memory-store.js"
 // within `margin` of the top match. Confidence comes from the top-vs-next gap,
 // which is scale-independent.
 
+/**
+ * Reserved branch/thread for insights stored explicitly via `store_insight`.
+ * These are branch-agnostic by design, so recall must treat them as in-scope
+ * at the branch-narrowed rung — see {@link escalatingRecall} rung 1.
+ */
+export const MANUAL_BRANCH = "manual";
+
 export interface RecallResult {
   hits: ScoredMemory[];
   scope: "project" | "all";
@@ -100,15 +107,30 @@ export async function escalatingRecall(
   const crossProjectEnabled =
     crossProjectRequested && config.recall.allowCrossProject;
 
-  // rung 1 — project + branch (most specific).
-  let pool = await store.recall(query, {
-    project,
-    ...(branch !== undefined ? { branch } : {}),
-    tags,
-    k: poolK,
-    threshold,
-    reinforce: false,
-  });
+  // rung 1 — project + branch (most specific). Manual insights live under the
+  // reserved MANUAL_BRANCH thread and are branch-agnostic by design, so they
+  // compete at this rung too via a second, parallel pool. Without it, mediocre
+  // same-branch hits clear the gate, stop the ladder, and mask a strong manual
+  // insight that only the never-reached rung 2 would have seen.
+  const recallRung1 = (scope: { branch?: string }) =>
+    store.recall(query, {
+      project,
+      ...scope,
+      tags,
+      k: poolK,
+      threshold,
+      reinforce: false,
+    });
+  // The two pools filter on disjoint threadIds, so concat cannot duplicate.
+  let pool =
+    branch !== undefined && branch !== MANUAL_BRANCH
+      ? (
+          await Promise.all([
+            recallRung1({ branch }),
+            recallRung1({ branch: MANUAL_BRANCH }),
+          ])
+        ).flat()
+      : await recallRung1(branch !== undefined ? { branch } : {});
   let g = gate(pool);
   if (g.hits.length > 0) {
     return {

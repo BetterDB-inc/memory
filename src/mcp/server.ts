@@ -5,7 +5,7 @@ import { getValkeyClient } from "../client/valkey.js";
 import { getPluginMemoryStore } from "../client/memory-store.js";
 import { createModelClient } from "../client/model.js";
 import { formatSearchResult } from "../memory/retrieval.js";
-import { escalatingRecall } from "../memory/recall.js";
+import { escalatingRecall, MANUAL_BRANCH } from "../memory/recall.js";
 import { getCwdProject, getGitBranch } from "../memory/capture.js";
 import { isConfigured } from "../config.js";
 import type { EpisodicMemory, KnowledgeEntry } from "../memory/schema.js";
@@ -15,7 +15,7 @@ const SETUP_MESSAGE =
 
 const server = new McpServer({
   name: "betterdb-memory",
-  version: "0.4.1",
+  version: "0.4.2",
 });
 
 // --- Tool: search_context ---
@@ -99,7 +99,7 @@ server.tool(
     const memory: EpisodicMemory = {
       memoryId: crypto.randomUUID(),
       project,
-      branch: "manual",
+      branch: MANUAL_BRANCH,
       timestamp: new Date().toISOString(),
       summary: {
         decisions: category === "decision" ? [content] : [],
