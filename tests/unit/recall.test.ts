@@ -56,7 +56,9 @@ const asStore = (f: FakeStore): PluginMemoryStore =>
 
 describe("escalatingRecall", () => {
   test("rung 1: a confident project+branch hit stops immediately", async () => {
-    const store = new FakeStore(() => [scored("confident", 0.7)]);
+    const store = new FakeStore((opts) =>
+      opts.branch === "main" ? [scored("confident", 0.7)] : [],
+    );
     const result = await escalatingRecall(asStore(store), "q", {
       project: "memory",
       branch: "main",
@@ -67,16 +69,20 @@ describe("escalatingRecall", () => {
     expect(result.scope).toBe("project");
     expect(result.confidence).toBe("high");
     expect(result.hits).toHaveLength(1);
-    // Only one recall call — no need to escalate.
-    expect(store.calls).toHaveLength(1);
+    // Rung 1 = branch pool + manual-insight pool, then stop — no escalation.
+    expect(store.calls).toHaveLength(2);
     // Rung 1 over-fetches the widened pool (k=10), not the old top-5.
     expect(store.calls[0]?.k).toBe(10);
     expect(store.calls[0]?.project).toBe("memory");
-    // Rung 1 narrows to the current branch.
+    // Rung 1 narrows to the current branch, plus the reserved manual thread.
     expect(store.calls[0]?.branch).toBe("main");
+    expect(store.calls[1]?.project).toBe("memory");
+    expect(store.calls[1]?.branch).toBe("manual");
+    expect(store.calls[1]?.k).toBe(10);
     // Over-fetch is speculative and gated afterward, so it must not reinforce
     // the pre-gate pool.
     expect(store.calls[0]?.reinforce).toBe(false);
+    expect(store.calls[1]?.reinforce).toBe(false);
   });
 
   test("no rung reinforces the pre-gate over-fetch pool", async () => {
@@ -90,7 +96,7 @@ describe("escalatingRecall", () => {
       crossProjectRequested: true,
     });
 
-    expect(store.calls).toHaveLength(3);
+    expect(store.calls).toHaveLength(4);
     for (const call of store.calls) {
       expect(call.reinforce).toBe(false);
     }
@@ -111,11 +117,11 @@ describe("escalatingRecall", () => {
     expect(result.rung).toBe(2);
     expect(result.scope).toBe("project");
     expect(result.hits).toHaveLength(1);
-    expect(store.calls).toHaveLength(2);
+    expect(store.calls).toHaveLength(3);
     // Rung 2 keeps the project but drops the branch and widens the pool.
-    expect(store.calls[1]?.project).toBe("memory");
-    expect(store.calls[1]?.branch).toBeUndefined();
-    expect(store.calls[1]?.k).toBe(20);
+    expect(store.calls[2]?.project).toBe("memory");
+    expect(store.calls[2]?.branch).toBeUndefined();
+    expect(store.calls[2]?.k).toBe(20);
   });
 
   test("rung 3: cross-project probe when the project has nothing", async () => {
@@ -145,7 +151,7 @@ describe("escalatingRecall", () => {
       crossProjectRequested: true,
     });
 
-    expect(store.calls).toHaveLength(3);
+    expect(store.calls).toHaveLength(4);
     for (const call of store.calls) {
       expect(call.tags).toEqual(["decision"]);
     }
@@ -170,14 +176,18 @@ describe("escalatingRecall", () => {
     // The pool has 5 irrelevant near-hits plus the canary at rank 6. The old
     // top-5 injection would have dropped it; the widened pool + relevance gate
     // surface it at rung 1.
-    const store = new FakeStore(() => [
-      scored("noise-1", 0.2),
-      scored("noise-2", 0.2),
-      scored("noise-3", 0.15),
-      scored("noise-4", 0.15),
-      scored("noise-5", 0.1),
-      scored("CANARY-7Q4X9M-betterdb-valkey-proof", 0.72),
-    ]);
+    const store = new FakeStore((opts) =>
+      opts.branch === "main"
+        ? [
+            scored("noise-1", 0.2),
+            scored("noise-2", 0.2),
+            scored("noise-3", 0.15),
+            scored("noise-4", 0.15),
+            scored("noise-5", 0.1),
+            scored("CANARY-7Q4X9M-betterdb-valkey-proof", 0.72),
+          ]
+        : [],
+    );
     const result = await escalatingRecall(asStore(store), "canary token", {
       project: "memory",
       branch: "main",
@@ -187,6 +197,45 @@ describe("escalatingRecall", () => {
     expect(result.rung).toBe(1);
     expect(result.hits).toHaveLength(1);
     expect(result.hits[0]?.memory.summary.oneLineSummary).toContain("CANARY-7Q4X9M");
+  });
+
+  test("dogfood regression: a manual insight is not masked by mediocre branch hits", async () => {
+    // Manual insights are stored under the reserved "manual" branch. Before
+    // the fix, rung 1 only queried the current branch: its mediocre hits
+    // cleared the floor, stopped the ladder, and the far-more-relevant manual
+    // insight (only visible branch-less at rung 2) was never seen.
+    const store = new FakeStore((opts) => {
+      if (opts.branch === "master") return [scored("old telemetry session", 0.75)];
+      if (opts.branch === "manual") return [scored("valkey page-3 issue review", 0.95)];
+      return [];
+    });
+    const result = await escalatingRecall(asStore(store), "valkey issue review", {
+      project: "monitor-master",
+      branch: "master",
+      crossProjectRequested: false,
+    });
+
+    expect(result.rung).toBe(1);
+    // The manual insight wins; the mediocre branch hit falls outside `margin`.
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0]?.memory.summary.oneLineSummary).toBe(
+      "valkey page-3 issue review",
+    );
+    expect(result.confidence).toBe("high");
+  });
+
+  test("rung 1 does not double-query when the branch IS the manual thread", async () => {
+    const store = new FakeStore(() => []);
+    await escalatingRecall(asStore(store), "q", {
+      project: "memory",
+      branch: "manual",
+      crossProjectRequested: false,
+    });
+
+    // rung 1 (single manual-branch query) + rung 2 — no duplicate manual pool.
+    expect(store.calls).toHaveLength(2);
+    expect(store.calls[0]?.branch).toBe("manual");
+    expect(store.calls[1]?.branch).toBeUndefined();
   });
 });
 
