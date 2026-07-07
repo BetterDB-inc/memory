@@ -15,7 +15,7 @@ const SETUP_MESSAGE =
 
 const server = new McpServer({
   name: "betterdb-memory",
-  version: "0.4.2",
+  version: "0.5.0",
 });
 
 // --- Tool: search_context ---
@@ -102,7 +102,8 @@ server.tool(
       branch: MANUAL_BRANCH,
       timestamp: new Date().toISOString(),
       summary: {
-        decisions: category === "decision" ? [content] : [],
+        decisions:
+          category === "decision" ? [{ text: content, status: "done" as const }] : [],
         patterns: category === "pattern" ? [content] : [],
         problemsSolved: [],
         openThreads: category === "warning" ? [content] : [],

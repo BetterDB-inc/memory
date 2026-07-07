@@ -14,14 +14,49 @@ export type SessionEvent = z.infer<typeof SessionEventSchema>;
 
 // --- Session Summary (output of summarizer) ---
 
+/**
+ * Provenance of a decision. "done" = actually made/implemented in the session;
+ * "proposed" = an option that was suggested but not committed to; "rejected" =
+ * an option that was turned down; "open" = still undecided. Keeps the
+ * summarizer from flattening a discussion of options into a list of "made"
+ * decisions.
+ */
+export const DecisionStatusSchema = z.enum([
+  "done",
+  "proposed",
+  "rejected",
+  "open",
+]);
+
+export type DecisionStatus = z.infer<typeof DecisionStatusSchema>;
+
+/**
+ * A decision with status provenance and an optional verbatim `quote` from the
+ * transcript that supports it (used by grounding, stripped before storage).
+ * Legacy summaries stored plain strings — the preprocess coerces those to
+ * `{ text, status: "done" }` so old memories keep parsing.
+ */
+export const DecisionSchema = z.preprocess(
+  (v) => (typeof v === "string" ? { text: v, status: "done" } : v),
+  z.object({
+    text: z.string(),
+    status: DecisionStatusSchema.default("done"),
+    quote: z.string().optional(),
+  }),
+);
+
+export type Decision = z.infer<typeof DecisionSchema>;
+
 export const SessionSummarySchema = z.object({
-  decisions: z.array(z.string()).max(10).default([]),
+  decisions: z.array(DecisionSchema).max(10).default([]),
   patterns: z.array(z.string()).max(5).default([]),
   problemsSolved: z
     .array(
       z.object({
         problem: z.string(),
         resolution: z.string(),
+        /** Verbatim supporting quote (grounding input, stripped before storage). */
+        quote: z.string().optional(),
       }),
     )
     .max(5)

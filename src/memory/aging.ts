@@ -73,7 +73,7 @@ export class AgingPipeline {
         if (!memory) return item.content;
         return (
           `Session: ${memory.summary.oneLineSummary}\n` +
-          `Decisions: ${memory.summary.decisions.join("; ")}\n` +
+          `Decisions: ${memory.summary.decisions.map((d) => d.text).join("; ")}\n` +
           `Patterns: ${memory.summary.patterns.join("; ")}`
         );
       })

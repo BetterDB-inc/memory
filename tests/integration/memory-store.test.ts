@@ -33,7 +33,7 @@ describe.skipIf(SKIP)("PluginMemoryStore integration", () => {
     branch: "main",
     timestamp: "2025-01-01T00:00:00.000Z",
     summary: {
-      decisions: ["Use the adapter"],
+      decisions: [{ text: "Use the adapter", status: "done" as const }],
       patterns: ["Dogfooding"],
       problemsSolved: [{ problem: "Duplication", resolution: "MemoryStore" }],
       openThreads: ["Wire into MCP"],

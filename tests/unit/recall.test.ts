@@ -297,7 +297,7 @@ describe("formatSearchResult", () => {
     // A pattern-tagged memory must surface its pattern text, or a pattern-
     // filtered search returns a hit whose excerpt can't answer the query.
     const memory = makeMemory("mixed session");
-    memory.summary.decisions = ["Adopt Bun"];
+    memory.summary.decisions = [{ text: "Adopt Bun", status: "done" }];
     memory.summary.patterns = ["Escalating recall ladder"];
     memory.summary.problemsSolved = [{ problem: "Slow KNN", resolution: "Over-fetch + gate" }];
     memory.summary.openThreads = ["Reconcile aging decay"];

@@ -81,7 +81,7 @@ describe.skipIf(SKIP)("ValkeyClient integration", () => {
     branch: "main",
     timestamp: new Date().toISOString(),
     summary: {
-      decisions: ["Use TypeScript"],
+      decisions: [{ text: "Use TypeScript", status: "done" as const }],
       patterns: ["Factory pattern"],
       problemsSolved: [{ problem: "Connection", resolution: "Retry" }],
       openThreads: ["Optimize queries"],
