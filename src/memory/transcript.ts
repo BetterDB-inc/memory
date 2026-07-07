@@ -54,10 +54,24 @@ export function selectTranscript(
     );
 
   const selected = new Set<number>();
-  // Reserve room for gap markers between non-contiguous selections.
-  let budget = maxChars - GAP_MARKER.length * 2;
+  // Assembly inserts a `[...]` marker (plus its own newline) for every
+  // non-contiguous gap and a trailing one when the last turn is dropped, so
+  // each marker costs GAP_MARKER.length + 1. A flat "reserve two markers"
+  // budget underestimates gappy selections and overflows maxChars. Instead
+  // charge each turn for the *marginal* markers it introduces: a turn
+  // isolated from its neighbours opens a new gap (+1), one that extends a run
+  // adds none, and one that bridges two runs closes a gap (-1). A run anchored
+  // at index 0 has no leading marker, so the first turn is refunded. One
+  // marker is reserved up front for the possible trailing gap.
+  const markerCost = GAP_MARKER.length + 1;
+  let budget = maxChars - markerCost;
   for (const { turn, index } of ranked) {
-    const cost = turn.text.length + 1;
+    const markerDelta =
+      1 -
+      (selected.has(index - 1) ? 1 : 0) -
+      (selected.has(index + 1) ? 1 : 0) -
+      (index === 0 ? 1 : 0);
+    const cost = turn.text.length + 1 + markerDelta * markerCost;
     if (cost <= budget) {
       selected.add(index);
       budget -= cost;

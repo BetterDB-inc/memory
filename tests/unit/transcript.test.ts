@@ -73,6 +73,19 @@ describe("selectTranscript", () => {
     expect(out).toContain("[...]");
   });
 
+  test("scattered high-priority turns never overflow maxChars", () => {
+    // A long, gappy session: many short user turns separated by bulky tool
+    // noise. Each surviving user turn opens its own `[...]` gap, and those
+    // per-gap markers must be budgeted or the result blows past maxChars.
+    const turns = Array.from({ length: 200 }, (_, i) =>
+      i % 2 === 0 ? user(`decision ${i}`) : tool("N".repeat(60)),
+    );
+    for (const maxChars of [200, 500, 1200, 4000]) {
+      const out = selectTranscript(turns, maxChars);
+      expect(out.length).toBeLessThanOrEqual(maxChars);
+    }
+  });
+
   test("tool-only fallback transcripts are not emptied", () => {
     const turns = Array.from({ length: 100 }, (_, i) => tool(`Edit-${i}`));
     const out = selectTranscript(turns, 200);
