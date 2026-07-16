@@ -1,30 +1,30 @@
 import { readRawPayload, runHook } from "./_utils.js";
 import { getValkeyClient } from "../client/valkey.js";
-import { getPluginMemoryStore } from "../client/memory-store.js";
-import { createModelClient } from "../client/model.js";
 import {
   SessionCapture,
-  computeInitialImportance,
   getGitBranch,
   getCwdProject,
 } from "../memory/capture.js";
-import { SessionEventSchema, type EpisodicMemory } from "../memory/schema.js";
+import { SessionEventSchema } from "../memory/schema.js";
 import { selectTranscript, type TranscriptTurn } from "../memory/transcript.js";
 import { config, isConfigured } from "../config.js";
 import { unlink } from "node:fs/promises";
 
 /**
- * Stop hook (session-end): Captures the session transcript and stores a memory.
+ * SessionEnd hook: captures the session transcript and queues it.
  *
  * Claude Code hooks contract:
- * - Fires when Claude finishes responding (Stop event)
- * - Receives JSON on stdin with session_id, transcript_path, cwd
+ * - Fires once when the session terminates
+ * - Receives JSON on stdin with session_id, transcript_path, cwd, reason
  * - Exit 0 for success
+ *
+ * This hook performs NO model work. It queues the transcript and spawns a
+ * detached drainer; AgingPipeline.processIngestQueue does the summarization.
+ * Summarizing here would block the session on an LLM call.
  *
  * Capture strategy:
  * 1. Prefer transcript_path (complete conversation with user messages)
  * 2. Fall back to JSONL event file (tool calls only)
- * 3. If model client is unavailable, queue for later processing
  */
 runHook(async () => {
   if (!isConfigured()) return;
@@ -92,42 +92,12 @@ runHook(async () => {
   const project = getCwdProject();
   const branch = getGitBranch();
 
-  // Try to summarize; queue on failure
-  let modelClient;
-  try {
-    modelClient = await createModelClient();
-  } catch {
-    console.error(
-      "[betterdb] Ollama unavailable — transcript queued for later processing",
-    );
-    await valkeyClient.pushIngestQueue(transcript, {
-      project,
-      branch,
-      timestamp: new Date().toISOString(),
-      sessionId,
-    });
-    await valkeyClient.quit();
-    await cleanup(eventFilePath);
-    return;
-  }
-
-  const summary = await modelClient.summarize(transcript);
-  const importance = computeInitialImportance(summary);
-
-  const memory: EpisodicMemory = {
-    memoryId: crypto.randomUUID(),
+  await valkeyClient.pushIngestQueue(transcript, {
     project,
     branch,
     timestamp: new Date().toISOString(),
-    summary,
-    importanceScore: importance,
-    accessCount: 0,
-    lastAccessed: new Date().toISOString(),
-  };
-
-  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
-  await store.storeMemory(memory);
-  await store.close();
+    sessionId,
+  });
   await valkeyClient.quit();
   await cleanup(eventFilePath);
 });
@@ -158,7 +128,11 @@ async function parseTranscriptTurns(path: string): Promise<TranscriptTurn[]> {
                   .join("\n")
               : "";
         // Skip system-generated messages (commands, caveats)
-        if (content && !content.includes("<local-command") && !content.includes("<command-name>")) {
+        if (
+          content &&
+          !content.includes("<local-command") &&
+          !content.includes("<command-name>")
+        ) {
           turns.push({ role: "user", text: `User: ${content}` });
         }
       } else if (entry.type === "assistant" && entry.message?.content) {
@@ -172,7 +146,10 @@ async function parseTranscriptTurns(path: string): Promise<TranscriptTurn[]> {
                   .join("\n")
               : "";
         if (content) {
-          turns.push({ role: "assistant", text: `Assistant: ${content.slice(0, 2000)}` });
+          turns.push({
+            role: "assistant",
+            text: `Assistant: ${content.slice(0, 2000)}`,
+          });
         }
       } else if (entry.type === "tool_use" || entry.type === "tool_result") {
         // Include tool names for context but keep it brief
