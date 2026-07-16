@@ -9,6 +9,7 @@ import { SessionEventSchema } from "../memory/schema.js";
 import { selectTranscript, type TranscriptTurn } from "../memory/transcript.js";
 import { config, isConfigured } from "../config.js";
 import { unlink } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * SessionEnd hook: captures the session transcript and queues it.
@@ -98,6 +99,18 @@ runHook(async () => {
     timestamp: new Date().toISOString(),
     sessionId,
   });
+
+  // Detached: unref() releases it from this process's event loop so the hook
+  // exits immediately while summarization continues in the background.
+  const drainBin = join(process.env["HOME"] ?? "", ".betterdb", "bin", "drain");
+  if (await Bun.file(drainBin).exists()) {
+    Bun.spawn([drainBin], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).unref();
+  }
+
   await valkeyClient.quit();
   await cleanup(eventFilePath);
 });
