@@ -63,7 +63,7 @@ const hooks = {
   SessionStart: [{ hooks: [{ type: 'command', command: wrap('session-start') }] }],
   PreToolUse:   [{ matcher: '', hooks: [{ type: 'command', command: wrap('pre-tool') }] }],
   PostToolUse:  [{ matcher: '', hooks: [{ type: 'command', command: wrap('post-tool') }] }],
-  Stop:         [{ hooks: [{ type: 'command', command: wrap('session-end') }] }],
+  SessionEnd:   [{ hooks: [{ type: 'command', command: wrap('session-end') }] }],
 };
 fs.writeFileSync(settingsPath, JSON.stringify({ ...existing, hooks }, null, 2));
 console.log('Hook configuration written to: ' + settingsPath);

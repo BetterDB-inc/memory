@@ -19,6 +19,7 @@ import {
   rmSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { stripLegacyBetterdbHooks } from "./hook-migration.js";
 
 const VERSION = "0.5.0";
 const HOME = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
@@ -234,7 +235,11 @@ async function runInstall() {
     }
   }
 
-  const existingHooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
+  // mergeHooks only touches events present in betterdbHooks, so the legacy
+  // Stop registration must be stripped explicitly or it survives upgrades.
+  const existingHooks = stripLegacyBetterdbHooks(
+    (settings["hooks"] ?? {}) as Record<string, unknown[]>,
+  );
   const betterdbHooks: Record<string, unknown[]> = {
     SessionStart: [
       { hooks: [{ type: "command", command: join(BIN_DIR, "session-start") }] },
@@ -251,7 +256,7 @@ async function runInstall() {
         hooks: [{ type: "command", command: join(BIN_DIR, "post-tool") }],
       },
     ],
-    Stop: [
+    SessionEnd: [
       { hooks: [{ type: "command", command: join(BIN_DIR, "session-end") }] },
     ],
   };
