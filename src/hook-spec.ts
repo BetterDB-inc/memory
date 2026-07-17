@@ -37,6 +37,32 @@ export const HOOK_SPECS: readonly HookSpec[] = [
 
 export const HOOK_COUNT = HOOK_SPECS.length;
 
+const HOOK_SOURCES: readonly string[] = HOOK_SPECS.map((spec) => spec.source);
+
+/**
+ * Whether a hook entry already in ~/.claude/settings.json is one this plugin
+ * wrote, and so may be replaced.
+ *
+ * Matching an install path alone is not enough: register-hooks.ts points hooks
+ * at a checkout whose path need not contain "betterdb", so such an entry
+ * survived a later install and kept firing alongside the new registration. The
+ * source filenames come from HOOK_SPECS, so they identify our entries wherever
+ * the checkout lives. `markers` adds the caller's own install location.
+ *
+ * Deliberately conservative — a false positive deletes a third party's hook,
+ * which is worse than leaving one of ours behind.
+ */
+export function isOwnHookEntry(
+  entry: unknown,
+  markers: readonly string[] = [],
+): boolean {
+  const json = JSON.stringify(entry) ?? "";
+  if (HOOK_SOURCES.some((source) => json.includes(source))) {
+    return true;
+  }
+  return markers.some((marker) => marker.length > 0 && json.includes(marker));
+}
+
 export function buildHookMap(
   toCommand: (spec: HookSpec) => string,
 ): Record<string, HookEntry[]> {

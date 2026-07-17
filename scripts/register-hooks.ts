@@ -16,6 +16,7 @@ import {
   HOOK_SPECS,
   buildHookMap,
   formatHookSummary,
+  isOwnHookEntry,
   type HookSpec,
 } from "../src/hook-spec.js";
 
@@ -72,8 +73,7 @@ const betterdbHooks = buildHookMap(cmd);
 for (const [event, entries] of Object.entries(betterdbHooks)) {
   const prev = Array.isArray(existingHooks[event]) ? existingHooks[event] : [];
   const filtered = prev.filter((entry) => {
-    const json = JSON.stringify(entry);
-    return !json.includes("betterdb") && !json.includes(hooksDir);
+    return !isOwnHookEntry(entry, [hooksDir, "betterdb"]);
   });
   existingHooks[event] = [...filtered, ...entries];
 }

@@ -19,7 +19,12 @@ import {
   rmSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { HOOK_COUNT, HOOK_SPECS, buildHookMap } from "./hook-spec.js";
+import {
+  HOOK_COUNT,
+  HOOK_SPECS,
+  buildHookMap,
+  isOwnHookEntry,
+} from "./hook-spec.js";
 
 const VERSION = "0.5.0";
 const HOME = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
@@ -897,10 +902,8 @@ function mergeHooks(
   const merged = { ...existing };
   for (const [event, entries] of Object.entries(ours)) {
     const prev = Array.isArray(merged[event]) ? merged[event] : [];
-    // Filter out previous BetterDB entries (contain our BIN_DIR or betterdb path)
     const filtered = prev.filter((entry) => {
-      const json = JSON.stringify(entry);
-      return !json.includes(BIN_DIR) && !json.includes("betterdb");
+      return !isOwnHookEntry(entry, [BIN_DIR, "betterdb"]);
     });
     merged[event] = [...filtered, ...entries];
   }
