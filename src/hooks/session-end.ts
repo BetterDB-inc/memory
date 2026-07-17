@@ -91,8 +91,13 @@ runHook(async () => {
     MAX_TRANSCRIPT,
   ).filter((text) => text.length >= 20);
 
-  // Nothing to store
+  // Nothing new to store. The Stop hook may still have queued segments this
+  // session, and it never spawns a drainer — so returning here without one
+  // would leave them unsummarized until some later session happened to drain.
   if (segments.length === 0) {
+    if (checkpoint.segment > 0) {
+      await spawnDrain();
+    }
     await cleanup(eventFilePath, sessionId);
     return;
   }
