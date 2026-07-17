@@ -6,7 +6,13 @@ import {
   getCwdProject,
 } from "../memory/capture.js";
 import { SessionEventSchema } from "../memory/schema.js";
-import { selectTranscript, type TranscriptTurn } from "../memory/transcript.js";
+import { selectTranscript } from "../memory/transcript.js";
+import {
+  parseTurnsFrom,
+  readCheckpoint,
+  removeCheckpoint,
+  type OffsetTurn,
+} from "../memory/checkpoint.js";
 import { config, isConfigured } from "../config.js";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -39,11 +45,11 @@ runHook(async () => {
   }
 
   const eventFilePath = `/tmp/betterdb-${sessionId}.jsonl`;
-  let turns: TranscriptTurn[] = [];
+  const checkpoint = await readCheckpoint(sessionId);
+  let turns: OffsetTurn[] = [];
 
-  // Prefer transcript_path — contains the full conversation including user messages
   if (transcriptPath) {
-    turns = await parseTranscriptTurns(transcriptPath);
+    turns = await parseTurnsFrom(transcriptPath, checkpoint.byteOffset);
   }
 
   // Fall back to JSONL event file (tool calls captured by PostToolUse hook).
@@ -66,7 +72,7 @@ runHook(async () => {
         .buildTranscript()
         .split("\n")
         .filter(Boolean)
-        .map((text) => ({ role: "tool" as const, text }));
+        .map((text) => ({ role: "tool" as const, text, endByte: 0 }));
     }
   }
 
@@ -78,7 +84,7 @@ runHook(async () => {
 
   // Nothing to store
   if (!transcript || transcript.length < 20) {
-    await cleanup(eventFilePath);
+    await cleanup(eventFilePath, sessionId);
     return;
   }
 
@@ -86,7 +92,7 @@ runHook(async () => {
   try {
     valkeyClient = await getValkeyClient();
   } catch {
-    await cleanup(eventFilePath);
+    await cleanup(eventFilePath, sessionId);
     return; // Valkey unreachable — skip silently
   }
 
@@ -98,12 +104,13 @@ runHook(async () => {
     branch,
     timestamp: new Date().toISOString(),
     sessionId,
+    segment: checkpoint.segment,
   });
 
   await spawnDrain();
 
   await valkeyClient.quit();
-  await cleanup(eventFilePath);
+  await cleanup(eventFilePath, sessionId);
 });
 
 /**
@@ -144,71 +151,11 @@ async function spawnDrain(): Promise<void> {
   );
 }
 
-/**
- * Parse Claude Code's transcript JSONL into role-tagged turns.
- * The JSONL contains objects with type: "user" | "assistant" and message content.
- * We extract user/assistant/tool turns so selectTranscript can rank them.
- */
-async function parseTranscriptTurns(path: string): Promise<TranscriptTurn[]> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return [];
-
-  const raw = await file.text();
-  const turns: TranscriptTurn[] = [];
-
-  for (const line of raw.split("\n").filter(Boolean)) {
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type === "user" && entry.message?.content) {
-        const content =
-          typeof entry.message.content === "string"
-            ? entry.message.content
-            : Array.isArray(entry.message.content)
-              ? entry.message.content
-                  .filter((b: { type: string }) => b.type === "text")
-                  .map((b: { text: string }) => b.text)
-                  .join("\n")
-              : "";
-        // Skip system-generated messages (commands, caveats)
-        if (
-          content &&
-          !content.includes("<local-command") &&
-          !content.includes("<command-name>")
-        ) {
-          turns.push({ role: "user", text: `User: ${content}` });
-        }
-      } else if (entry.type === "assistant" && entry.message?.content) {
-        const content =
-          typeof entry.message.content === "string"
-            ? entry.message.content
-            : Array.isArray(entry.message.content)
-              ? entry.message.content
-                  .filter((b: { type: string }) => b.type === "text")
-                  .map((b: { text: string }) => b.text)
-                  .join("\n")
-              : "";
-        if (content) {
-          turns.push({
-            role: "assistant",
-            text: `Assistant: ${content.slice(0, 2000)}`,
-          });
-        }
-      } else if (entry.type === "tool_use" || entry.type === "tool_result") {
-        // Include tool names for context but keep it brief
-        const toolName = entry.tool_name ?? entry.name ?? "";
-        if (toolName) {
-          turns.push({ role: "tool", text: `Tool: ${toolName}` });
-        }
-      }
-    } catch {
-      // Skip malformed lines
-    }
-  }
-
-  return turns;
-}
-
-async function cleanup(eventFilePath: string): Promise<void> {
+async function cleanup(
+  eventFilePath: string,
+  sessionId: string,
+): Promise<void> {
+  await removeCheckpoint(sessionId);
   try {
     await unlink(eventFilePath);
   } catch {
