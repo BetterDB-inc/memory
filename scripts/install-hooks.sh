@@ -42,7 +42,8 @@ if [ ! -f "$GLOBAL_SETTINGS" ]; then
   echo '{}' > "$GLOBAL_SETTINGS"
 fi
 
-# Merge hooks into existing settings using Bun (preserves other fields, overwrites hooks block)
+# Merge hooks into existing settings using Bun — replaces our own entries per
+# event and preserves every other field, including third-party hooks
 # Each hook command sources the .env file first so compiled binaries get the right env vars
 # (bun build --compile binaries don't auto-load .env like `bun run` does)
 DIST_DIR="$PROJECT_DIR/dist/hooks"
@@ -50,7 +51,7 @@ ENV_FILE="$PROJECT_DIR/.env"
 
 bun -e "
 const fs = require('fs');
-const { buildHookMap } = require('$PROJECT_DIR/src/hook-spec.ts');
+const { buildHookMap, isOwnHookEntry } = require('$PROJECT_DIR/src/hook-spec.ts');
 const settingsPath = '$GLOBAL_SETTINGS';
 const envFile = '$ENV_FILE';
 const distDir = '$DIST_DIR';
@@ -60,7 +61,12 @@ const existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 const wrap = (bin) =>
   'bash -c ' + JSON.stringify('set -a; [ -f ' + envFile + ' ] && . ' + envFile + '; set +a; ' + distDir + '/' + bin);
 
-const hooks = buildHookMap((spec) => wrap(spec.binary));
+const hooks = { ...(existing.hooks || {}) };
+for (const [event, entries] of Object.entries(buildHookMap((spec) => wrap(spec.binary)))) {
+  const prev = Array.isArray(hooks[event]) ? hooks[event] : [];
+  const kept = prev.filter((entry) => !isOwnHookEntry(entry, [distDir, 'betterdb']));
+  hooks[event] = [...kept, ...entries];
+}
 fs.writeFileSync(settingsPath, JSON.stringify({ ...existing, hooks }, null, 2));
 console.log('Hook configuration written to: ' + settingsPath);
 "
