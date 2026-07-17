@@ -76,9 +76,11 @@ export function buildHookMap(
   return map;
 }
 
-export function formatHookSummary(): string[] {
+export function formatHookSummary(
+  describe: (spec: HookSpec) => string = (spec) => spec.source,
+): string[] {
   const width = Math.max(...HOOK_SPECS.map((spec) => spec.event.length));
   return HOOK_SPECS.map(
-    (spec) => `  ${spec.event.padEnd(width)} → ${spec.source}`,
+    (spec) => `  ${spec.event.padEnd(width)} → ${describe(spec)}`,
   );
 }
