@@ -100,11 +100,24 @@ runHook(async () => {
     sessionId,
   });
 
-  // Detached: unref() releases it from this process's event loop so the hook
-  // exits immediately while summarization continues in the background.
+  await spawnDrain();
+
+  await valkeyClient.quit();
+  await cleanup(eventFilePath);
+});
+
+/**
+ * Spawn the detached drainer. unref() releases it from this process's event
+ * loop, so the hook exits immediately while summarization continues.
+ *
+ * Both install shapes must work: `install` compiles binaries into
+ * ~/.betterdb/bin, while register-hooks.ts registers `bun run <src>` and
+ * compiles nothing. Resolving only the compiled path left that second shape
+ * with no drainer at all — and the exists() guard made it silent.
+ */
+async function spawnDrain(): Promise<void> {
   // HOME is unset on Windows, where install and config both fall back to
-  // USERPROFILE — without the same fallback the path never resolves and the
-  // drain silently never runs.
+  // USERPROFILE.
   const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
   const drainBin = join(home, ".betterdb", "bin", "drain");
   if (await Bun.file(drainBin).exists()) {
@@ -113,11 +126,23 @@ runHook(async () => {
       stdout: "ignore",
       stderr: "ignore",
     }).unref();
+    return;
   }
 
-  await valkeyClient.quit();
-  await cleanup(eventFilePath);
-});
+  const drainSrc = join(import.meta.dir, "drain.ts");
+  if (await Bun.file(drainSrc).exists()) {
+    Bun.spawn(["bun", "run", drainSrc], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).unref();
+    return;
+  }
+
+  console.error(
+    "[betterdb] no drain binary or source found — queued transcripts stay queued until `betterdb-memory drain` runs",
+  );
+}
 
 /**
  * Parse Claude Code's transcript JSONL into role-tagged turns.
