@@ -1,6 +1,6 @@
 import { describe, expect, test, afterAll } from "bun:test";
 import { unlink } from "node:fs/promises";
-import { getValkeyClient } from "../../src/client/valkey.js";
+import { getValkeyClient, resetValkeyClient } from "../../src/client/valkey.js";
 import {
   CHECKPOINT_THRESHOLD,
   nextChunk,
@@ -24,7 +24,7 @@ const META = {
 
 async function seedTranscript(): Promise<void> {
   const lines: string[] = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 14; i++) {
     lines.push(
       JSON.stringify({
         type: "user",
@@ -39,6 +39,7 @@ describe.skipIf(SKIP)("checkpoint capture integration", () => {
   afterAll(async () => {
     await unlink(FIXTURE).catch(() => {});
     await unlink(checkpointPath(SID)).catch(() => {});
+    await resetValkeyClient();
   });
 
   test("produces sequential segments plus a tail", async () => {
@@ -49,11 +50,14 @@ describe.skipIf(SKIP)("checkpoint capture integration", () => {
     // Start from a clean queue without assuming a raw() accessor.
     await vk.popIngestQueue(10000);
 
+    let loopSegments = 0;
+    let exitedViaNull = false;
     for (let guard = 0; guard < 20; guard++) {
       const cp = await readCheckpoint(SID);
       const turns = await parseTurnsFrom(FIXTURE, cp.byteOffset);
       const result = nextChunk(turns, CHECKPOINT_THRESHOLD);
       if (result === null) {
+        exitedViaNull = true;
         break;
       }
       await vk.pushIngestQueue(result.chunk, { ...META, segment: cp.segment });
@@ -61,19 +65,25 @@ describe.skipIf(SKIP)("checkpoint capture integration", () => {
         byteOffset: result.endByte,
         segment: cp.segment + 1,
       });
+      loopSegments++;
     }
 
     const cp = await readCheckpoint(SID);
     const tail = await parseTurnsFrom(FIXTURE, cp.byteOffset);
     const tailText = tail.map((t) => t.text).join("\n");
+    let tailPushed = false;
     if (tailText.length >= 20) {
       await vk.pushIngestQueue(tailText, { ...META, segment: cp.segment });
+      tailPushed = true;
     }
 
     const items = await vk.popIngestQueue(50);
     await vk.quit();
 
-    expect(items.length).toBeGreaterThanOrEqual(3);
+    expect(exitedViaNull).toBe(true);
+    expect(loopSegments).toBeGreaterThanOrEqual(2);
+    expect(tailPushed).toBe(true);
+    expect(items.length).toBe(loopSegments + 1);
     const segments = items.map((i) => (i.meta as { segment: number }).segment);
     expect(segments).toEqual([...Array(items.length).keys()]);
     for (const item of items) {
