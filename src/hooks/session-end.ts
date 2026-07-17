@@ -102,7 +102,11 @@ runHook(async () => {
 
   // Detached: unref() releases it from this process's event loop so the hook
   // exits immediately while summarization continues in the background.
-  const drainBin = join(process.env["HOME"] ?? "", ".betterdb", "bin", "drain");
+  // HOME is unset on Windows, where install and config both fall back to
+  // USERPROFILE — without the same fallback the path never resolves and the
+  // drain silently never runs.
+  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
+  const drainBin = join(home, ".betterdb", "bin", "drain");
   if (await Bun.file(drainBin).exists()) {
     Bun.spawn([drainBin], {
       stdin: "ignore",
