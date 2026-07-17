@@ -44,4 +44,15 @@ describe("parseTurnsFrom", () => {
     const turns = await parseTurnsFrom(FIXTURE, 0);
     expect(turns[turns.length - 1]!.endByte).toBe(size);
   });
+
+  test("final endByte equals file size when no trailing newline", async () => {
+    await Bun.write(
+      FIXTURE,
+      JSON.stringify({ type: "user", message: { content: "no newline" } }),
+    );
+    const size = Bun.file(FIXTURE).size;
+    const turns = await parseTurnsFrom(FIXTURE, 0);
+    expect(turns).toHaveLength(1);
+    expect(turns[turns.length - 1]!.endByte).toBe(size);
+  });
 });
