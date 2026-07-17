@@ -6,9 +6,10 @@ import {
   getCwdProject,
 } from "../memory/capture.js";
 import { SessionEventSchema } from "../memory/schema.js";
-import { selectTranscript } from "../memory/transcript.js";
 import {
+  CHECKPOINT_THRESHOLD,
   parseTurnsFrom,
+  planTailSegments,
   readCheckpoint,
   removeCheckpoint,
   type OffsetTurn,
@@ -52,10 +53,13 @@ runHook(async () => {
     turns = await parseTurnsFrom(transcriptPath, checkpoint.byteOffset);
   }
 
-  // Fall back to JSONL event file (tool calls captured by PostToolUse hook).
-  // Event lines rank as tool turns; with no user turns present the selector
-  // keeps them, so a tool-only fallback transcript is never emptied.
-  if (turns.length === 0) {
+  // Fall back to JSONL event file (tool calls captured by PostToolUse hook)
+  // only when no checkpoint ever ran. Event lines rank as tool turns; with no
+  // user turns present the selector keeps them, so a tool-only fallback
+  // transcript is never emptied. After a checkpoint an empty tail means the
+  // transcript is already fully queued, and the event file covers the whole
+  // session — re-queueing it would duplicate earlier segments.
+  if (turns.length === 0 && checkpoint.segment === 0) {
     const eventFile = Bun.file(eventFilePath);
     if (await eventFile.exists()) {
       const raw = await eventFile.text();
@@ -76,14 +80,19 @@ runHook(async () => {
     }
   }
 
-  // Cap to ~8K chars for the summarizer via priority-based selection (user
-  // turns > assistant turns near user turns > tool lines) instead of the old
-  // head+tail slice, which dropped the middle of long sessions wholesale.
+  // Chunk the tail the way Stop does rather than capping it once: a session
+  // whose Stop hook never checkpointed arrives here whole, and a single cap
+  // would discard everything past it. Only the sub-threshold remainder is
+  // selected down.
   const MAX_TRANSCRIPT = 8000;
-  const transcript = selectTranscript(turns, MAX_TRANSCRIPT);
+  const segments = planTailSegments(
+    turns,
+    CHECKPOINT_THRESHOLD,
+    MAX_TRANSCRIPT,
+  ).filter((text) => text.length >= 20);
 
   // Nothing to store
-  if (!transcript || transcript.length < 20) {
+  if (segments.length === 0) {
     await cleanup(eventFilePath, sessionId);
     return;
   }
@@ -99,13 +108,15 @@ runHook(async () => {
   const project = getCwdProject();
   const branch = getGitBranch();
 
-  await valkeyClient.pushIngestQueue(transcript, {
-    project,
-    branch,
-    timestamp: new Date().toISOString(),
-    sessionId,
-    segment: checkpoint.segment,
-  });
+  for (let i = 0; i < segments.length; i++) {
+    await valkeyClient.pushIngestQueue(segments[i]!, {
+      project,
+      branch,
+      timestamp: new Date().toISOString(),
+      sessionId,
+      segment: checkpoint.segment + i,
+    });
+  }
 
   await spawnDrain();
 

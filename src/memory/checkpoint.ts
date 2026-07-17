@@ -1,5 +1,5 @@
 import { rename, unlink } from "node:fs/promises";
-import { parseTranscriptLine } from "./transcript.js";
+import { parseTranscriptLine, selectTranscript } from "./transcript.js";
 
 export interface OffsetTurn {
   role: "user" | "assistant" | "tool";
@@ -26,6 +26,41 @@ export function nextChunk(
     }
   }
   return null;
+}
+
+/**
+ * Split a session-end tail into the segments to queue, in order.
+ *
+ * The Stop hook is an optimization, not a correctness requirement: when it
+ * never ran (fresh install before a restart, Valkey unreachable) the whole
+ * transcript arrives here. Capping that with a single `maxChars` selection
+ * would silently discard everything past the cap — the truncation checkpoint
+ * capture exists to remove. So chunk the tail exactly as Stop would, and let
+ * only the final sub-threshold remainder go through `selectTranscript`.
+ */
+export function planTailSegments(
+  turns: OffsetTurn[],
+  threshold: number,
+  maxChars: number,
+): string[] {
+  const segments: string[] = [];
+  let remaining = turns;
+
+  for (;;) {
+    const result = nextChunk(remaining, threshold);
+    if (result === null) {
+      break;
+    }
+    segments.push(result.chunk);
+    remaining = remaining.slice(result.consumedTurns);
+  }
+
+  const tail = selectTranscript(remaining, maxChars);
+  if (tail.length > 0) {
+    segments.push(tail);
+  }
+
+  return segments;
 }
 
 export interface Checkpoint {
