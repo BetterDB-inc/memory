@@ -32,6 +32,7 @@ const PKG_ROOT = resolve(import.meta.dir, "..");
 const BINARIES = [
   { src: "src/hooks/session-start.ts", out: "session-start" },
   { src: "src/hooks/session-end.ts", out: "session-end" },
+  { src: "src/hooks/stop-checkpoint.ts", out: "stop-checkpoint" },
   { src: "src/hooks/pre-tool.ts", out: "pre-tool" },
   { src: "src/hooks/post-tool.ts", out: "post-tool" },
   { src: "src/hooks/drain.ts", out: "drain" },
@@ -259,11 +260,14 @@ async function runInstall() {
     SessionEnd: [
       { hooks: [{ type: "command", command: join(BIN_DIR, "session-end") }] },
     ],
+    Stop: [
+      { hooks: [{ type: "command", command: join(BIN_DIR, "stop-checkpoint") }] },
+    ],
   };
   settings["hooks"] = mergeHooks(existingHooks, betterdbHooks);
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-  console.log("  Registered 4 hooks in ~/.claude/settings.json");
+  console.log("  Registered 5 hooks in ~/.claude/settings.json");
 
   // Register MCP server globally (-s user) so it's available in all projects
   const mcpBin = join(BIN_DIR, "mcp-server");
@@ -359,7 +363,7 @@ async function runInstall() {
   // 7. PRINT SUMMARY
   console.log("\n=== Installation Complete ===\n");
   console.log(`  ✅ Compiled ${BINARIES.length} binaries to ${BIN_DIR}/`);
-  console.log("  ✅ Registered 4 hooks with Claude Code");
+  console.log("  ✅ Registered 5 hooks with Claude Code");
   console.log("  ✅ Registered MCP server: betterdb-memory");
   console.log("  ✅ Valkey index ready");
   console.log(`  ✅ Config saved to ${CONFIG_PATH}`);

@@ -29,6 +29,7 @@ const hookFiles = [
   "pre-tool.ts",
   "post-tool.ts",
   "session-end.ts",
+  "stop-checkpoint.ts",
 ];
 for (const file of hookFiles) {
   if (!existsSync(join(hooksDir, file))) {
@@ -84,6 +85,9 @@ const betterdbHooks: Record<string, unknown[]> = {
   SessionEnd: [
     { hooks: [{ type: "command", command: cmd("session-end.ts") }] },
   ],
+  Stop: [
+    { hooks: [{ type: "command", command: cmd("stop-checkpoint.ts") }] },
+  ],
 };
 
 for (const [event, entries] of Object.entries(betterdbHooks)) {
@@ -103,5 +107,6 @@ console.log("  SessionStart → session-start.ts");
 console.log("  PreToolUse   → pre-tool.ts");
 console.log("  PostToolUse  → post-tool.ts");
 console.log("  SessionEnd   → session-end.ts");
+console.log("  Stop         → stop-checkpoint.ts");
 console.log(`\n  Plugin root: ${resolvedRoot}`);
 console.log("\n  Restart Claude Code for hooks to take effect.");

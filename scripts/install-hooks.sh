@@ -64,6 +64,7 @@ const hooks = {
   PreToolUse:   [{ matcher: '', hooks: [{ type: 'command', command: wrap('pre-tool') }] }],
   PostToolUse:  [{ matcher: '', hooks: [{ type: 'command', command: wrap('post-tool') }] }],
   SessionEnd:   [{ hooks: [{ type: 'command', command: wrap('session-end') }] }],
+  Stop:         [{ hooks: [{ type: 'command', command: wrap('stop-checkpoint') }] }],
 };
 fs.writeFileSync(settingsPath, JSON.stringify({ ...existing, hooks }, null, 2));
 console.log('Hook configuration written to: ' + settingsPath);
@@ -92,6 +93,7 @@ echo ""
 echo "Hooks written to: ~/.claude/settings.json"
 echo "  SessionStart  → $DIST_DIR/session-start"
 echo "  SessionEnd    → $DIST_DIR/session-end"
+echo "  Stop          → $DIST_DIR/stop-checkpoint"
 echo "  PreToolUse    → $DIST_DIR/pre-tool"
 echo "  PostToolUse   → $DIST_DIR/post-tool"
 echo ""
