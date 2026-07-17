@@ -1,4 +1,5 @@
 import { rename, unlink } from "node:fs/promises";
+import { parseTranscriptLine } from "./transcript.js";
 
 export interface OffsetTurn {
   role: "user" | "assistant" | "tool";
@@ -69,4 +70,41 @@ export async function writeCheckpoint(
 
 export async function removeCheckpoint(sessionId: string): Promise<void> {
   await unlink(checkpointPath(sessionId)).catch(() => {});
+}
+
+export async function parseTurnsFrom(
+  path: string,
+  fromByte: number,
+): Promise<OffsetTurn[]> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    return [];
+  }
+
+  const bytes = new Uint8Array(await file.slice(fromByte).arrayBuffer());
+  const decoder = new TextDecoder();
+  const turns: OffsetTurn[] = [];
+  let lineStart = 0;
+
+  for (let i = 0; i <= bytes.length; i++) {
+    const atEnd = i === bytes.length;
+    if (!atEnd && bytes[i] !== 0x0a) {
+      continue;
+    }
+    const lineBytes = bytes.subarray(lineStart, i);
+    const endByte = fromByte + (atEnd ? i : i + 1);
+    lineStart = i + 1;
+    if (lineBytes.length === 0) {
+      continue;
+    }
+    const line = decoder.decode(lineBytes).trim();
+    if (!line) {
+      continue;
+    }
+    for (const turn of parseTranscriptLine(line)) {
+      turns.push({ ...turn, endByte });
+    }
+  }
+
+  return turns;
 }
