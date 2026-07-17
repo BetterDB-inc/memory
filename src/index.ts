@@ -19,7 +19,7 @@ import {
   rmSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { stripLegacyBetterdbHooks } from "./hook-migration.js";
+import { HOOK_COUNT, HOOK_SPECS, buildHookMap } from "./hook-spec.js";
 
 const VERSION = "0.5.0";
 const HOME = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
@@ -29,15 +29,14 @@ const CONFIG_PATH = join(BETTERDB_DIR, "memory.json");
 const MANIFEST_PATH = join(BETTERDB_DIR, "install-manifest.json");
 const PKG_ROOT = resolve(import.meta.dir, "..");
 
-const BINARIES = [
-  { src: "src/hooks/session-start.ts", out: "session-start" },
-  { src: "src/hooks/session-end.ts", out: "session-end" },
-  { src: "src/hooks/stop-checkpoint.ts", out: "stop-checkpoint" },
-  { src: "src/hooks/pre-tool.ts", out: "pre-tool" },
-  { src: "src/hooks/post-tool.ts", out: "post-tool" },
+const BINARIES: readonly { src: string; out: string }[] = [
+  ...HOOK_SPECS.map((spec) => ({
+    src: `src/hooks/${spec.source}`,
+    out: spec.binary,
+  })),
   { src: "src/hooks/drain.ts", out: "drain" },
   { src: "src/mcp/server.ts", out: "mcp-server" },
-] as const;
+];
 
 const USAGE = `
 BetterDB Memory for Claude Code v${VERSION}
@@ -236,38 +235,12 @@ async function runInstall() {
     }
   }
 
-  // mergeHooks only touches events present in betterdbHooks, so the legacy
-  // Stop registration must be stripped explicitly or it survives upgrades.
-  const existingHooks = stripLegacyBetterdbHooks(
-    (settings["hooks"] ?? {}) as Record<string, unknown[]>,
-  );
-  const betterdbHooks: Record<string, unknown[]> = {
-    SessionStart: [
-      { hooks: [{ type: "command", command: join(BIN_DIR, "session-start") }] },
-    ],
-    PreToolUse: [
-      {
-        matcher: "",
-        hooks: [{ type: "command", command: join(BIN_DIR, "pre-tool") }],
-      },
-    ],
-    PostToolUse: [
-      {
-        matcher: "",
-        hooks: [{ type: "command", command: join(BIN_DIR, "post-tool") }],
-      },
-    ],
-    SessionEnd: [
-      { hooks: [{ type: "command", command: join(BIN_DIR, "session-end") }] },
-    ],
-    Stop: [
-      { hooks: [{ type: "command", command: join(BIN_DIR, "stop-checkpoint") }] },
-    ],
-  };
+  const existingHooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
+  const betterdbHooks = buildHookMap((spec) => join(BIN_DIR, spec.binary));
   settings["hooks"] = mergeHooks(existingHooks, betterdbHooks);
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-  console.log("  Registered 5 hooks in ~/.claude/settings.json");
+  console.log(`  Registered ${HOOK_COUNT} hooks in ~/.claude/settings.json`);
 
   // Register MCP server globally (-s user) so it's available in all projects
   const mcpBin = join(BIN_DIR, "mcp-server");
@@ -363,7 +336,7 @@ async function runInstall() {
   // 7. PRINT SUMMARY
   console.log("\n=== Installation Complete ===\n");
   console.log(`  ✅ Compiled ${BINARIES.length} binaries to ${BIN_DIR}/`);
-  console.log("  ✅ Registered 5 hooks with Claude Code");
+  console.log(`  ✅ Registered ${HOOK_COUNT} hooks with Claude Code`);
   console.log("  ✅ Registered MCP server: betterdb-memory");
   console.log("  ✅ Valkey index ready");
   console.log(`  ✅ Config saved to ${CONFIG_PATH}`);
