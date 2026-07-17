@@ -5,3 +5,4 @@ dist/
 .mcp.json
 *.log
 bun.lockb
+.idea/
