@@ -10,6 +10,7 @@ export interface OllamaTransport {
     messages: { role: string; content: string }[];
     format: string;
     stream: true;
+    keep_alive: string;
   }): Promise<AsyncIterable<{ message: { content: string } }>>;
   embed(request: {
     model: string;
@@ -50,20 +51,21 @@ export class OllamaModelClient implements ModelClient {
    * and a non-streaming generate sends no bytes until the entire summary is
    * done — long generations died as TimeoutError. Chunks keep the connection
    * alive for as long as the model keeps producing.
+   *
+   * A cold model load is silent for longer than the idle timeout allows, but
+   * the load keeps going server-side after the client gives up — so one
+   * timed-out attempt is retried against the by-then warm model, and
+   * keep_alive holds the model in memory between calls.
    */
   async summarize(transcript: string): Promise<SessionSummary> {
-    const stream = await this.ollama.chat({
-      model: this.preset.summarizeModel,
-      messages: [
-        { role: "user", content: buildSummarizePrompt(transcript) },
-      ],
-      format: "json",
-      stream: true,
-    });
-
-    let content = "";
-    for await (const chunk of stream) {
-      content += chunk.message.content;
+    let content: string;
+    try {
+      content = await this.chatSummary(transcript);
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "TimeoutError")) {
+        throw err;
+      }
+      content = await this.chatSummary(transcript);
     }
 
     const parsed = SessionSummarySchema.safeParse(
@@ -79,5 +81,23 @@ export class OllamaModelClient implements ModelClient {
     }
 
     return parsed.data;
+  }
+
+  private async chatSummary(transcript: string): Promise<string> {
+    const stream = await this.ollama.chat({
+      model: this.preset.summarizeModel,
+      messages: [
+        { role: "user", content: buildSummarizePrompt(transcript) },
+      ],
+      format: "json",
+      stream: true,
+      keep_alive: "60m",
+    });
+
+    let content = "";
+    for await (const chunk of stream) {
+      content += chunk.message.content;
+    }
+    return content;
   }
 }
