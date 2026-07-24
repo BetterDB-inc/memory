@@ -41,6 +41,23 @@ describe("isOwnHookEntry", () => {
     expect(isOwnHookEntry(entry("/opt/other/hook"), [""])).toBe(false);
   });
 
+  test("every registered hook carries an explicit timeout", () => {
+    // Without one, Claude Code waits 60s per hook — a wedged backend held
+    // every tool call hostage for minutes. Pre/post fire on each tool call
+    // and must be the tightest.
+    const map = buildHookMap((spec) => spec.binary);
+    for (const [event, entries] of Object.entries(map)) {
+      for (const entry of entries) {
+        for (const cmd of entry.hooks) {
+          expect(cmd.timeout).toBeGreaterThan(0);
+          if (event === "PreToolUse" || event === "PostToolUse") {
+            expect(cmd.timeout).toBeLessThanOrEqual(10);
+          }
+        }
+      }
+    }
+  });
+
   test("recognizes every hook this plugin registers", () => {
     const map = buildHookMap((spec) => `bash -c 'bun run "/work/memory/src/hooks/${spec.source}"'`);
     for (const spec of HOOK_SPECS) {

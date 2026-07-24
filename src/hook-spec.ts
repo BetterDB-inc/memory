@@ -10,11 +10,13 @@ export interface HookSpec {
   readonly source: string;
   readonly binary: string;
   readonly matcher?: string;
+  readonly timeout: number;
 }
 
 export interface HookCommand {
   readonly type: "command";
   readonly command: string;
+  readonly timeout: number;
 }
 
 export interface HookEntry {
@@ -22,17 +24,45 @@ export interface HookEntry {
   readonly hooks: readonly HookCommand[];
 }
 
+/**
+ * Timeouts are seconds, enforced by Claude Code per hook invocation. They are
+ * a backstop over the client-side fail-fast connect: pre/post fire on every
+ * tool call and must never make a tool call feel slow; the session-boundary
+ * hooks may parse large transcripts and get more room.
+ */
 export const HOOK_SPECS: readonly HookSpec[] = [
-  { event: "SessionStart", source: "session-start.ts", binary: "session-start" },
-  { event: "PreToolUse", source: "pre-tool.ts", binary: "pre-tool", matcher: "" },
+  {
+    event: "SessionStart",
+    source: "session-start.ts",
+    binary: "session-start",
+    timeout: 30,
+  },
+  {
+    event: "PreToolUse",
+    source: "pre-tool.ts",
+    binary: "pre-tool",
+    matcher: "",
+    timeout: 10,
+  },
   {
     event: "PostToolUse",
     source: "post-tool.ts",
     binary: "post-tool",
     matcher: "",
+    timeout: 10,
   },
-  { event: "SessionEnd", source: "session-end.ts", binary: "session-end" },
-  { event: "Stop", source: "stop-checkpoint.ts", binary: "stop-checkpoint" },
+  {
+    event: "SessionEnd",
+    source: "session-end.ts",
+    binary: "session-end",
+    timeout: 60,
+  },
+  {
+    event: "Stop",
+    source: "stop-checkpoint.ts",
+    binary: "stop-checkpoint",
+    timeout: 30,
+  },
 ];
 
 export interface BinarySpec {
@@ -82,7 +112,9 @@ export function buildHookMap(
 ): Record<string, HookEntry[]> {
   const map: Record<string, HookEntry[]> = {};
   for (const spec of HOOK_SPECS) {
-    const hooks: HookCommand[] = [{ type: "command", command: toCommand(spec) }];
+    const hooks: HookCommand[] = [
+      { type: "command", command: toCommand(spec), timeout: spec.timeout },
+    ];
     const entry: HookEntry =
       spec.matcher === undefined ? { hooks } : { matcher: spec.matcher, hooks };
     (map[spec.event] ??= []).push(entry);
