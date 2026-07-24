@@ -43,6 +43,7 @@ export const config = {
     embedModel: env("BETTERDB_EMBED_MODEL") ?? "mxbai-embed-large",
     summarizeModel: env("BETTERDB_SUMMARIZE_MODEL") ?? "mistral:7b",
     embedDim: Number(env("BETTERDB_EMBED_DIM") ?? 1024),
+    keepAlive: env("BETTERDB_OLLAMA_KEEP_ALIVE") ?? "5m",
   },
   memory: {
     maxContextMemories: Number(env("BETTERDB_MAX_CONTEXT_MEMORIES") ?? 5),

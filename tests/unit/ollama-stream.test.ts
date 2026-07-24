@@ -60,7 +60,9 @@ describe("OllamaModelClient.summarize", () => {
     expect(fake.requests.length).toBe(2);
   });
 
-  test("keeps the model warm across calls via keep_alive", async () => {
+  test("passes the configured keep_alive on every chat call", async () => {
+    // Default is a modest 5m: native Ollama reloads in seconds, so pinning
+    // the model in RAM for longer trades gigabytes for nothing.
     const json = JSON.stringify({ oneLineSummary: "Recovered" });
     const fake = timeoutOnce([json]);
 
@@ -68,7 +70,7 @@ describe("OllamaModelClient.summarize", () => {
     await client.summarize("User: transcript");
 
     for (const request of fake.requests) {
-      expect(request.keep_alive).toBe("60m");
+      expect(request.keep_alive).toBe("5m");
     }
   });
 

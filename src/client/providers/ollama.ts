@@ -91,7 +91,7 @@ export class OllamaModelClient implements ModelClient {
       ],
       format: "json",
       stream: true,
-      keep_alive: "60m",
+      keep_alive: config.ollama.keepAlive,
     });
 
     let content = "";
