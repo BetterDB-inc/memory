@@ -137,7 +137,8 @@ export class AgingPipeline {
     let processed = 0;
     let skipped = 0;
 
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
       try {
         const summary = await this.modelClient.summarize(item.transcript);
 
@@ -169,8 +170,15 @@ export class AgingPipeline {
         processed++;
       } catch (err) {
         console.error("[betterdb] Failed to process queued transcript:", err);
-        // Re-queue on failure
-        await this.valkeyClient.pushIngestQueue(item.transcript, item.meta);
+        // The pop was destructive: everything not yet processed must go back,
+        // not just the item that failed, or the rest of the batch is lost
+        // when this process exits.
+        for (const unprocessed of items.slice(i)) {
+          await this.valkeyClient.pushIngestQueue(
+            unprocessed.transcript,
+            unprocessed.meta,
+          );
+        }
         break;
       }
     }
