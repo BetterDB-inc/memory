@@ -1,0 +1,22 @@
+services:
+  valkey:
+    image: valkey/valkey-bundle:9.1-alpine
+    command:
+      - valkey-server
+      - --dir
+      - /data
+      - --appendonly
+      - "yes"
+      - --save
+      - "60 1"
+    container_name: betterdb-valkey
+    ports:
+      - "6390:6379"
+    volumes:
+      - valkey-data:/data
+    restart: unless-stopped
+
+volumes:
+  valkey-data:
+    name: betterdb-valkey-data
+    external: true

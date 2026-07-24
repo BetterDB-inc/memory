@@ -48,6 +48,24 @@ bunx @betterdb/memory install
 
 ## Setup (for development)
 
+### macOS
+
+**Never run Ollama in Docker on macOS.** Docker on macOS has no GPU
+passthrough, so models run CPU-only inside the VM — measured 388s to first
+token vs 10s native. Use the native Ollama.app and the Mac compose file,
+which runs only Valkey (with AOF persistence enabled):
+
+```bash
+docker compose -f docker-compose.mac.yml up -d   # Valkey only
+open -a Ollama                                   # Native Ollama on :11434
+ollama pull mxbai-embed-large
+ollama pull qwen2.5:3b
+bun install
+bun run setup-index
+```
+
+### Linux
+
 ```bash
 docker compose up -d        # Start Valkey (with search module) + Ollama
 bun install                 # Install dependencies
