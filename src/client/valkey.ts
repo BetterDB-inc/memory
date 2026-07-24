@@ -429,21 +429,20 @@ let clientInstance: ValkeyClient | null = null;
 export async function getValkeyClient(): Promise<ValkeyClient> {
   if (clientInstance) return clientInstance;
 
-  const retryDelays = [100, 500, 2000];
+  // Hooks run on every tool call, so a dead or unresponsive Valkey must cost
+  // milliseconds, not minutes.
+  const retryDelays = [100, 300];
   let lastError: Error | null = null;
 
-  for (const delay of retryDelays) {
+  for (const delay of [...retryDelays, 0]) {
     try {
-      const redis = new Redis(config.valkey.url, {
-        maxRetriesPerRequest: 3,
-        lazyConnect: true,
-      });
-      await redis.connect();
-      clientInstance = new ValkeyClient(redis);
+      clientInstance = new ValkeyClient(await connectValkey(config.valkey.url));
       return clientInstance;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 
@@ -454,4 +453,41 @@ export async function getValkeyClient(): Promise<ValkeyClient> {
 
 export function resetValkeyClient(): void {
   clientInstance = null;
+}
+
+/**
+ * One connection attempt under a hard deadline. connectTimeout only bounds
+ * the TCP connect — a proxy that accepts for a missing backend passes it and
+ * then hangs the ready check — so the whole attempt races the deadline, and
+ * the null retryStrategy stops ioredis from retrying forever underneath the
+ * caller's retry loop.
+ */
+export async function connectValkey(
+  url: string,
+  deadlineMs = 1000,
+): Promise<Redis> {
+  const redis = new Redis(url, {
+    maxRetriesPerRequest: 3,
+    lazyConnect: true,
+    connectTimeout: deadlineMs,
+    retryStrategy: () => null,
+  });
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      redis.connect(),
+      new Promise((_, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("connection attempt deadline exceeded")),
+          deadlineMs,
+        );
+      }),
+    ]);
+    return redis;
+  } catch (err) {
+    redis.disconnect();
+    throw err;
+  } finally {
+    clearTimeout(deadline);
+  }
 }
