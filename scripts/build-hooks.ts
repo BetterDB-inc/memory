@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 
 /**
- * Compile each hook entry point in HOOK_SPECS to a standalone binary.
+ * Compile each hook entry point in HOOK_SPECS, plus the companion binaries
+ * hooks spawn at runtime, to standalone binaries.
  *
  * Usage:
  *   bun run scripts/build-hooks.ts
@@ -13,7 +14,7 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOOK_SPECS } from "../src/hook-spec.js";
+import { COMPANION_BINARIES, HOOK_SPECS } from "../src/hook-spec.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hooksDir = join(projectRoot, "src", "hooks");
@@ -23,7 +24,9 @@ const OPTIONAL_PROVIDERS = ["openai"];
 
 mkdirSync(outDir, { recursive: true });
 
-for (const spec of HOOK_SPECS) {
+const specs = [...HOOK_SPECS, ...COMPANION_BINARIES];
+
+for (const spec of specs) {
   const source = join(hooksDir, spec.source);
   const outfile = join(outDir, spec.binary);
   console.log(`Compiling ${spec.source} → dist/hooks/${spec.binary}`);
@@ -51,4 +54,4 @@ for (const name of readdirSync(projectRoot)) {
   }
 }
 
-console.log(`Compiled ${HOOK_SPECS.length} hook binaries to dist/hooks/`);
+console.log(`Compiled ${specs.length} binaries to dist/hooks/`);

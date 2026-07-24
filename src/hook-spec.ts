@@ -35,6 +35,20 @@ export const HOOK_SPECS: readonly HookSpec[] = [
   { event: "Stop", source: "stop-checkpoint.ts", binary: "stop-checkpoint" },
 ];
 
+export interface BinarySpec {
+  readonly source: string;
+  readonly binary: string;
+}
+
+/**
+ * Non-hook binaries that must ship next to the hook binaries: the SessionEnd
+ * hook resolves the drainer as a sibling of its own executable, so every
+ * shape that compiles hooks must compile these too.
+ */
+export const COMPANION_BINARIES: readonly BinarySpec[] = [
+  { source: "drain.ts", binary: "drain" },
+];
+
 export const HOOK_COUNT = HOOK_SPECS.length;
 
 const HOOK_SOURCES: readonly string[] = HOOK_SPECS.map((spec) => spec.source);

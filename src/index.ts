@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  COMPANION_BINARIES,
   HOOK_COUNT,
   HOOK_SPECS,
   buildHookMap,
@@ -35,11 +36,10 @@ const MANIFEST_PATH = join(BETTERDB_DIR, "install-manifest.json");
 const PKG_ROOT = resolve(import.meta.dir, "..");
 
 const BINARIES: readonly { src: string; out: string }[] = [
-  ...HOOK_SPECS.map((spec) => ({
+  ...[...HOOK_SPECS, ...COMPANION_BINARIES].map((spec) => ({
     src: `src/hooks/${spec.source}`,
     out: spec.binary,
   })),
-  { src: "src/hooks/drain.ts", out: "drain" },
   { src: "src/mcp/server.ts", out: "mcp-server" },
 ];
 

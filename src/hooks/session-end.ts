@@ -15,8 +15,9 @@ import {
   type OffsetTurn,
 } from "../memory/checkpoint.js";
 import { config, isConfigured } from "../config.js";
+import { locateDrainCommand } from "./locate-drain.js";
 import { unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * SessionEnd hook: captures the session transcript and queues it.
@@ -132,39 +133,27 @@ runHook(async () => {
 /**
  * Spawn the detached drainer. unref() releases it from this process's event
  * loop, so the hook exits immediately while summarization continues.
- *
- * Both install shapes must work: `install` compiles binaries into
- * ~/.betterdb/bin, while register-hooks.ts registers `bun run <src>` and
- * compiles nothing. Resolving only the compiled path left that second shape
- * with no drainer at all — and the exists() guard made it silent.
  */
 async function spawnDrain(): Promise<void> {
   // HOME is unset on Windows, where install and config both fall back to
   // USERPROFILE.
   const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
-  const drainBin = join(home, ".betterdb", "bin", "drain");
-  if (await Bun.file(drainBin).exists()) {
-    Bun.spawn([drainBin], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    }).unref();
+  const cmd = await locateDrainCommand({
+    execDir: dirname(process.execPath),
+    installBinDir: join(home, ".betterdb", "bin"),
+    sourceDir: import.meta.dir,
+  });
+  if (!cmd) {
+    console.error(
+      "[betterdb] no drain binary or source found — queued transcripts stay queued until `betterdb-memory drain` runs",
+    );
     return;
   }
-
-  const drainSrc = join(import.meta.dir, "drain.ts");
-  if (await Bun.file(drainSrc).exists()) {
-    Bun.spawn(["bun", "run", drainSrc], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    }).unref();
-    return;
-  }
-
-  console.error(
-    "[betterdb] no drain binary or source found — queued transcripts stay queued until `betterdb-memory drain` runs",
-  );
+  Bun.spawn(cmd, {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  }).unref();
 }
 
 async function cleanup(
