@@ -132,10 +132,15 @@ export class AgingPipeline {
 
   // --- Ingest Queue Processing ---
 
-  async processIngestQueue(): Promise<{ processed: number; skipped: number }> {
+  async processIngestQueue(): Promise<{
+    processed: number;
+    skipped: number;
+    halted: boolean;
+  }> {
     const items = await this.valkeyClient.popIngestQueue(20);
     let processed = 0;
     let skipped = 0;
+    let halted = false;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
@@ -179,10 +184,34 @@ export class AgingPipeline {
             unprocessed.meta,
           );
         }
+        halted = true;
         break;
       }
     }
 
+    return { processed, skipped, halted };
+  }
+
+  /**
+   * Drain the ingest queue completely. Each pop is capped, but a
+   * checkpointing session can enqueue far more segments than one cap; the
+   * drainer runs detached with nothing waiting on it, so it loops until a
+   * round comes back empty. A halted round means the failed batch was
+   * re-queued — looping again would spin against a dead summarizer.
+   */
+  async drainIngestQueue(
+    maxRounds = 50,
+  ): Promise<{ processed: number; skipped: number }> {
+    let processed = 0;
+    let skipped = 0;
+    for (let round = 0; round < maxRounds; round++) {
+      const result = await this.processIngestQueue();
+      processed += result.processed;
+      skipped += result.skipped;
+      if (result.halted || result.processed + result.skipped === 0) {
+        break;
+      }
+    }
     return { processed, skipped };
   }
 

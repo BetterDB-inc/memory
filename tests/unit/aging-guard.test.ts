@@ -96,6 +96,68 @@ describe("processIngestQueue empty-summary guard", () => {
   });
 });
 
+function countedValkey(items: Array<{ transcript: string; meta: object }>) {
+  const requeued: string[] = [];
+  let pops = 0;
+  return {
+    client: {
+      popIngestQueue: async (count: number) => {
+        pops++;
+        return items.splice(0, count);
+      },
+      pushIngestQueue: async (t: string) => {
+        requeued.push(t);
+      },
+    },
+    requeued,
+    pops: () => pops,
+  };
+}
+
+describe("drainIngestQueue", () => {
+  test("drains the whole queue across multiple pops", async () => {
+    // A checkpointing session can enqueue more segments than one pop cap;
+    // the drainer is detached and unclocked, so it keeps going until dry.
+    const real = SessionSummarySchema.parse({ oneLineSummary: "Did a thing" });
+    const items = Array.from({ length: 45 }, (_, i) => ({
+      transcript: `segment ${i}`,
+      meta: {},
+    }));
+    const stored: SessionSummary[] = [];
+    const vk = countedValkey(items);
+
+    const pipeline = new AgingPipeline(
+      vk.client as never,
+      fakeStore(stored) as never,
+      fakeModel(real) as never,
+    );
+    const result = await pipeline.drainIngestQueue();
+
+    expect(result.processed).toBe(45);
+    expect(stored.length).toBe(45);
+    expect(vk.pops()).toBeGreaterThan(2);
+  });
+
+  test("stops after a failing round instead of spinning on a dead summarizer", async () => {
+    const items = Array.from({ length: 25 }, (_, i) => ({
+      transcript: `segment ${i}`,
+      meta: {},
+    }));
+    const vk = countedValkey(items);
+
+    const pipeline = new AgingPipeline(
+      vk.client as never,
+      fakeStore([]) as never,
+      failingModel() as never,
+    );
+    const result = await pipeline.drainIngestQueue();
+
+    expect(result.processed).toBe(0);
+    expect(vk.pops()).toBe(1);
+    expect(vk.requeued.length).toBe(20);
+  });
+});
+
 describe("processIngestQueue failure handling", () => {
   test("re-queues the failed item and every remaining popped item", async () => {
     // The pop is destructive: anything popped but neither stored nor

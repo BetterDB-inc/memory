@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   const store = await getPluginMemoryStore((t) => modelClient.embed(t));
   const pipeline = new AgingPipeline(valkeyClient, store, modelClient);
 
-  const { processed, skipped } = await pipeline.processIngestQueue();
+  const { processed, skipped } = await pipeline.drainIngestQueue();
   console.error(`[betterdb] drain: processed=${processed} skipped=${skipped}`);
 
   await store.close();
