@@ -27,4 +27,24 @@ describe("connectValkey against an unresponsive server", () => {
 
     expect(Date.now() - started).toBeLessThan(3000);
   }, 30_000);
+
+  test("does not leak an unhandled rejection from the losing connect", async () => {
+    // disconnect() rejects the still-pending connect() after the deadline
+    // already won the race; unabsorbed, that surfaces as an unhandled
+    // rejection a tick later.
+    const rejections: unknown[] = [];
+    const handler = (err: unknown) => {
+      rejections.push(err);
+    };
+    process.on("unhandledRejection", handler);
+    try {
+      await connectValkey(`redis://127.0.0.1:${blackhole.port}`, 50).catch(
+        () => {},
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", handler);
+    }
+  }, 30_000);
 });
