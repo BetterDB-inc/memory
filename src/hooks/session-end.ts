@@ -15,6 +15,7 @@ import {
   type OffsetTurn,
 } from "../memory/checkpoint.js";
 import { config, isConfigured } from "../config.js";
+import { flushSegments } from "./flush-segments.js";
 import { locateDrainCommand } from "./locate-drain.js";
 import { unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -111,22 +112,21 @@ runHook(async () => {
     return; // Valkey unreachable — skip silently
   }
 
-  const project = getCwdProject();
-  const branch = getGitBranch();
+  const { pushed } = await flushSegments(valkeyClient, segments, {
+    project: getCwdProject(),
+    branch: getGitBranch(),
+    sessionId,
+    baseSegment: checkpoint.segment,
+  });
 
-  for (let i = 0; i < segments.length; i++) {
-    await valkeyClient.pushIngestQueue(segments[i]!, {
-      project,
-      branch,
-      timestamp: new Date().toISOString(),
-      sessionId,
-      segment: checkpoint.segment + i,
-    });
+  // Drain even after a partial flush: the Stop hook's segments and whatever
+  // was pushed before the failure are already queued and nothing else will
+  // summarize them this session.
+  if (pushed > 0 || checkpoint.segment > 0) {
+    await spawnDrain();
   }
 
-  await spawnDrain();
-
-  await valkeyClient.quit();
+  await valkeyClient.quit().catch(() => {});
   await cleanup(eventFilePath, sessionId);
 });
 
