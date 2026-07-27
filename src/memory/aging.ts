@@ -8,6 +8,7 @@ import {
 } from "../client/memory-store.js";
 import type { EpisodicMemory } from "./schema.js";
 import { computeInitialImportance } from "./capture.js";
+import { isEmptySummary } from "./summary-guard.js";
 
 // --- Aging Pipeline ---
 //
@@ -85,9 +86,7 @@ export class AgingPipeline {
 
   // --- Distillation ---
 
-  async runDistillation(
-    project: string,
-  ): Promise<{ distilled: number }> {
+  async runDistillation(project: string): Promise<{ distilled: number }> {
     const memories = await this.store.listMemories(project, 0.5);
 
     if (memories.length < config.memory.distillMinSessions) {
@@ -133,13 +132,25 @@ export class AgingPipeline {
 
   // --- Ingest Queue Processing ---
 
-  async processIngestQueue(): Promise<{ processed: number }> {
+  async processIngestQueue(): Promise<{ processed: number; skipped: number }> {
     const items = await this.valkeyClient.popIngestQueue(20);
     let processed = 0;
+    let skipped = 0;
 
     for (const item of items) {
       try {
         const summary = await this.modelClient.summarize(item.transcript);
+
+        // Dropped, not re-queued: a transcript the model cannot summarize
+        // would loop forever.
+        if (isEmptySummary(summary)) {
+          console.error(
+            "[betterdb] Summarizer returned no content — dropping transcript instead of storing an empty memory",
+          );
+          skipped++;
+          continue;
+        }
+
         const importance = computeInitialImportance(summary);
 
         const meta = item.meta as Record<string, string>;
@@ -159,15 +170,12 @@ export class AgingPipeline {
       } catch (err) {
         console.error("[betterdb] Failed to process queued transcript:", err);
         // Re-queue on failure
-        await this.valkeyClient.pushIngestQueue(
-          item.transcript,
-          item.meta,
-        );
+        await this.valkeyClient.pushIngestQueue(item.transcript, item.meta);
         break;
       }
     }
 
-    return { processed };
+    return { processed, skipped };
   }
 
   // --- Full Pipeline ---
@@ -175,12 +183,12 @@ export class AgingPipeline {
   async runFullPipeline(project?: string): Promise<void> {
     console.error("[betterdb] Starting aging pipeline...");
 
-    const { processed: ingested } = await this.processIngestQueue();
-    console.error(`[betterdb] Ingest queue: processed ${ingested} items`);
+    const { processed: ingested, skipped } = await this.processIngestQueue();
+    console.error(
+      `[betterdb] Ingest queue: processed ${ingested} items, skipped ${skipped} empty`,
+    );
 
-    const projects = project
-      ? [project]
-      : await this.allProjects();
+    const projects = project ? [project] : await this.allProjects();
 
     for (const p of projects) {
       const { consolidated, created, deleted } = await this.runConsolidation(p);
@@ -189,7 +197,9 @@ export class AgingPipeline {
       );
 
       const { distilled } = await this.runDistillation(p);
-      console.error(`[betterdb] Distillation (${p}): distilled ${distilled} entries`);
+      console.error(
+        `[betterdb] Distillation (${p}): distilled ${distilled} entries`,
+      );
     }
 
     await this.valkeyClient.setLastAgingRun(new Date());

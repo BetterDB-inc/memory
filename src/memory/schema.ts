@@ -63,9 +63,7 @@ export const SessionSummarySchema = z.object({
     .default([]),
   openThreads: z.array(z.string()).max(5).default([]),
   filesChanged: z.array(z.string()).default([]),
-  oneLineSummary: z
-    .string()
-    .default("Session recorded — summary unavailable"),
+  oneLineSummary: z.string().default("Session recorded — summary unavailable"),
 });
 
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
@@ -115,8 +113,13 @@ export const SessionStartPayload = BaseHookPayload.extend({
   source: z.enum(["startup", "resume", "clear", "compact"]).optional(),
 });
 
-export const StopPayload = BaseHookPayload.extend({
-  hook_event_name: z.literal("Stop"),
+// SessionEnd fires once when the session terminates, unlike Stop which fires
+// every time Claude finishes responding. Its payload carries transcript_path
+// (verified against a live hook, not the docs — the hooks reference does not
+// publish this schema).
+export const SessionEndPayload = BaseHookPayload.extend({
+  hook_event_name: z.literal("SessionEnd"),
+  reason: z.string().optional(),
 });
 
 export const PreToolUsePayload = BaseHookPayload.extend({
@@ -134,13 +137,13 @@ export const PostToolUsePayload = BaseHookPayload.extend({
 
 export const HookPayloadSchema = z.discriminatedUnion("hook_event_name", [
   SessionStartPayload,
-  StopPayload,
+  SessionEndPayload,
   PreToolUsePayload,
   PostToolUsePayload,
 ]);
 
 export type HookPayload = z.infer<typeof HookPayloadSchema>;
 export type SessionStartHookPayload = z.infer<typeof SessionStartPayload>;
-export type StopHookPayload = z.infer<typeof StopPayload>;
+export type SessionEndHookPayload = z.infer<typeof SessionEndPayload>;
 export type PreToolUseHookPayload = z.infer<typeof PreToolUsePayload>;
 export type PostToolUseHookPayload = z.infer<typeof PostToolUsePayload>;

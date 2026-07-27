@@ -10,8 +10,16 @@
  *   betterdb-memory maintain   — Run aging/compression manually
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  chmodSync,
+  rmSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
+import { stripLegacyBetterdbHooks } from "./hook-migration.js";
 
 const VERSION = "0.5.0";
 const HOME = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
@@ -26,6 +34,7 @@ const BINARIES = [
   { src: "src/hooks/session-end.ts", out: "session-end" },
   { src: "src/hooks/pre-tool.ts", out: "pre-tool" },
   { src: "src/hooks/post-tool.ts", out: "post-tool" },
+  { src: "src/hooks/drain.ts", out: "drain" },
   { src: "src/mcp/server.ts", out: "mcp-server" },
 ] as const;
 
@@ -40,6 +49,7 @@ Commands:
   uninstall        Remove hooks, MCP server, and compiled binaries
   status           Check health of Valkey and model providers
   maintain         Run aging/consolidation pipeline manually
+  drain            Summarize and store any queued transcripts
   forget           Bulk-delete memories by scope (dry run; pass --apply)
                    Flags: --project <name> (default: cwd) | --all-projects
                           --branch <name> --tags <a,b> --apply
@@ -70,6 +80,9 @@ switch (command) {
     break;
   case "maintain":
     await runMaintain();
+    break;
+  case "drain":
+    await runDrain();
     break;
   case "forget":
     await runForget(process.argv.slice(3));
@@ -125,7 +138,9 @@ async function runInstall() {
   }
   if (!commandExists("claude")) {
     console.error("ERROR: 'claude' not found on PATH.");
-    console.error("Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code");
+    console.error(
+      "Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code",
+    );
     process.exit(1);
   }
   console.log("Preflight checks passed.\n");
@@ -139,7 +154,10 @@ async function runInstall() {
   process.stdout.write(`Connecting to Valkey at ${valkeyUrl}... `);
   try {
     const Redis = (await import("iovalkey")).default;
-    const client = new Redis(valkeyUrl, { maxRetriesPerRequest: 1, lazyConnect: true });
+    const client = new Redis(valkeyUrl, {
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+    });
     await client.connect();
     await client.ping();
     console.log("OK");
@@ -147,8 +165,12 @@ async function runInstall() {
   } catch (err) {
     console.log("FAILED");
     console.error(`\nCould not connect to Valkey at ${valkeyUrl}`);
-    console.error("Make sure Valkey 8+ is running with the Search module loaded.");
-    console.error("Quick start: docker run -d -p 6379:6379 valkey/valkey-bundle:8");
+    console.error(
+      "Make sure Valkey 8+ is running with the Search module loaded.",
+    );
+    console.error(
+      "Quick start: docker run -d -p 6379:6379 valkey/valkey-bundle:8",
+    );
     process.exit(1);
   }
 
@@ -167,8 +189,14 @@ async function runInstall() {
     }
 
     const result = Bun.spawnSync([
-      "bun", "build", "--compile", "--external", "openai",
-      srcPath, "--outfile", outPath,
+      "bun",
+      "build",
+      "--compile",
+      "--external",
+      "openai",
+      srcPath,
+      "--outfile",
+      outPath,
     ]);
 
     if (result.exitCode !== 0) {
@@ -184,7 +212,9 @@ async function runInstall() {
   // Verify all binaries exist
   const missing = BINARIES.filter((b) => !existsSync(join(BIN_DIR, b.out)));
   if (missing.length > 0) {
-    console.error(`\nERROR: Missing binaries: ${missing.map((b) => b.out).join(", ")}`);
+    console.error(
+      `\nERROR: Missing binaries: ${missing.map((b) => b.out).join(", ")}`,
+    );
     process.exit(1);
   }
 
@@ -205,12 +235,30 @@ async function runInstall() {
     }
   }
 
-  const existingHooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
+  // mergeHooks only touches events present in betterdbHooks, so the legacy
+  // Stop registration must be stripped explicitly or it survives upgrades.
+  const existingHooks = stripLegacyBetterdbHooks(
+    (settings["hooks"] ?? {}) as Record<string, unknown[]>,
+  );
   const betterdbHooks: Record<string, unknown[]> = {
-    SessionStart: [{ hooks: [{ type: "command", command: join(BIN_DIR, "session-start") }] }],
-    PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: join(BIN_DIR, "pre-tool") }] }],
-    PostToolUse: [{ matcher: "", hooks: [{ type: "command", command: join(BIN_DIR, "post-tool") }] }],
-    Stop: [{ hooks: [{ type: "command", command: join(BIN_DIR, "session-end") }] }],
+    SessionStart: [
+      { hooks: [{ type: "command", command: join(BIN_DIR, "session-start") }] },
+    ],
+    PreToolUse: [
+      {
+        matcher: "",
+        hooks: [{ type: "command", command: join(BIN_DIR, "pre-tool") }],
+      },
+    ],
+    PostToolUse: [
+      {
+        matcher: "",
+        hooks: [{ type: "command", command: join(BIN_DIR, "post-tool") }],
+      },
+    ],
+    SessionEnd: [
+      { hooks: [{ type: "command", command: join(BIN_DIR, "session-end") }] },
+    ],
   };
   settings["hooks"] = mergeHooks(existingHooks, betterdbHooks);
 
@@ -221,7 +269,14 @@ async function runInstall() {
   const mcpBin = join(BIN_DIR, "mcp-server");
   Bun.spawnSync(["claude", "mcp", "remove", "-s", "user", "betterdb-memory"]);
   const mcpResult = Bun.spawnSync([
-    "claude", "mcp", "add", "-s", "user", "betterdb-memory", "--", mcpBin,
+    "claude",
+    "mcp",
+    "add",
+    "-s",
+    "user",
+    "betterdb-memory",
+    "--",
+    mcpBin,
   ]);
   if (mcpResult.exitCode === 0) {
     console.log("  Registered MCP server: betterdb-memory (global)");
@@ -239,14 +294,19 @@ async function runInstall() {
     const client = await getValkeyClient();
     const modelClient = await createModelClient();
     // Record the active provider/dimension so a later provider swap is caught.
-    await client.assertEmbedDim(modelClient.embedDim, modelClient.preset.embedModel);
+    await client.assertEmbedDim(
+      modelClient.embedDim,
+      modelClient.preset.embedModel,
+    );
     const store = await getPluginMemoryStore((t) => modelClient.embed(t));
     await store.ensureIndex();
     console.log("  Valkey index ready");
     await store.close();
     await client.quit();
   } catch (err) {
-    console.log(`  WARNING: Index setup failed (${err instanceof Error ? err.message : String(err)})`);
+    console.log(
+      `  WARNING: Index setup failed (${err instanceof Error ? err.message : String(err)})`,
+    );
     console.log("  You can create it later: npx @betterdb/memory setup-index");
   }
 
@@ -255,7 +315,8 @@ async function runInstall() {
 
   const configData: Record<string, string | number> = {
     BETTERDB_VALKEY_URL: valkeyUrl,
-    BETTERDB_VALKEY_INDEX_NAME: Bun.env["BETTERDB_VALKEY_INDEX_NAME"] ?? "betterdb-memory-index",
+    BETTERDB_VALKEY_INDEX_NAME:
+      Bun.env["BETTERDB_VALKEY_INDEX_NAME"] ?? "betterdb-memory-index",
     BETTERDB_EMBED_DIM: Number(Bun.env["BETTERDB_EMBED_DIM"] ?? 1024),
     version: VERSION,
     installedAt: new Date().toISOString(),
@@ -263,11 +324,18 @@ async function runInstall() {
 
   // Carry forward any extra env vars the user has set
   const extraKeys = [
-    "BETTERDB_EMBED_MODEL", "BETTERDB_SUMMARIZE_MODEL",
-    "BETTERDB_OLLAMA_URL", "BETTERDB_EMBED_PROVIDER", "BETTERDB_SUMMARIZE_PROVIDER",
-    "BETTERDB_MAX_CONTEXT_MEMORIES", "BETTERDB_ALLOW_REMOTE_FALLBACK",
-    "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "OPENAI_API_KEY",
-    "GROQ_API_KEY", "TOGETHER_API_KEY",
+    "BETTERDB_EMBED_MODEL",
+    "BETTERDB_SUMMARIZE_MODEL",
+    "BETTERDB_OLLAMA_URL",
+    "BETTERDB_EMBED_PROVIDER",
+    "BETTERDB_SUMMARIZE_PROVIDER",
+    "BETTERDB_MAX_CONTEXT_MEMORIES",
+    "BETTERDB_ALLOW_REMOTE_FALLBACK",
+    "ANTHROPIC_API_KEY",
+    "VOYAGE_API_KEY",
+    "OPENAI_API_KEY",
+    "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
   ];
   for (const key of extraKeys) {
     const val = Bun.env[key];
@@ -277,7 +345,10 @@ async function runInstall() {
   writeFileSync(CONFIG_PATH, JSON.stringify(configData, null, 2) + "\n");
 
   const manifest = {
-    binaries: BINARIES.map((b) => ({ name: b.out, path: join(BIN_DIR, b.out) })),
+    binaries: BINARIES.map((b) => ({
+      name: b.out,
+      path: join(BIN_DIR, b.out),
+    })),
     configPath: CONFIG_PATH,
     settingsPath,
     installedAt: new Date().toISOString(),
@@ -321,7 +392,14 @@ async function runUninstall() {
 
   // Remove MCP server (try both user and local scope)
   Bun.spawnSync(["claude", "mcp", "remove", "-s", "local", "betterdb-memory"]);
-  const mcpResult = Bun.spawnSync(["claude", "mcp", "remove", "-s", "user", "betterdb-memory"]);
+  const mcpResult = Bun.spawnSync([
+    "claude",
+    "mcp",
+    "remove",
+    "-s",
+    "user",
+    "betterdb-memory",
+  ]);
   if (mcpResult.exitCode === 0) {
     console.log("  Removed MCP server: betterdb-memory");
   } else {
@@ -341,7 +419,9 @@ async function runUninstall() {
   }
 
   console.log("\n  Uninstall complete.");
-  console.log(`  Config preserved at ${CONFIG_PATH} — delete ~/.betterdb/ to remove entirely.`);
+  console.log(
+    `  Config preserved at ${CONFIG_PATH} — delete ~/.betterdb/ to remove entirely.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +472,9 @@ async function runStatus() {
   if (present.length === BINARIES.length) {
     console.log(`OK (${present.length}/${BINARIES.length} in ${BIN_DIR}/)`);
   } else if (present.length > 0) {
-    console.log(`PARTIAL (${present.length}/${BINARIES.length} — reinstall recommended)`);
+    console.log(
+      `PARTIAL (${present.length}/${BINARIES.length} — reinstall recommended)`,
+    );
   } else {
     console.log("NOT INSTALLED (run: npx @betterdb/memory install)");
   }
@@ -404,7 +486,9 @@ async function runStatus() {
     if (existsSync(settingsPath)) {
       const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
       const hookCount = Object.keys(settings.hooks ?? {}).length;
-      console.log(hookCount > 0 ? `OK (${hookCount} lifecycle events)` : "NOT CONFIGURED");
+      console.log(
+        hookCount > 0 ? `OK (${hookCount} lifecycle events)` : "NOT CONFIGURED",
+      );
     } else {
       console.log("NOT CONFIGURED (no ~/.claude/settings.json)");
     }
@@ -422,7 +506,9 @@ async function runStatus() {
       const output = result.stdout.toString().trim();
       if (output.includes("is running")) {
         const portMatch = output.match(/port (\d+)/);
-        console.log(`OK (betterdb-valkey, running, port ${portMatch?.[1] ?? "unknown"})`);
+        console.log(
+          `OK (betterdb-valkey, running, port ${portMatch?.[1] ?? "unknown"})`,
+        );
       } else if (output.includes("stopped")) {
         console.log(`STOPPED (run: bunx @betterdb/memory docker-valkey)`);
       } else {
@@ -473,6 +559,29 @@ async function runMaintain() {
 }
 
 // ---------------------------------------------------------------------------
+// drain (summarize + store queued transcripts)
+
+async function runDrain() {
+  const { getValkeyClient } = await import("./client/valkey.js");
+  const { getPluginMemoryStore } = await import("./client/memory-store.js");
+  const { createModelClient } = await import("./client/model.js");
+  const { AgingPipeline } = await import("./memory/aging.js");
+
+  const valkeyClient = await getValkeyClient();
+  const modelClient = await createModelClient();
+  const store = await getPluginMemoryStore((t) => modelClient.embed(t));
+  const pipeline = new AgingPipeline(valkeyClient, store, modelClient);
+
+  const { processed, skipped } = await pipeline.processIngestQueue();
+  console.log(
+    `Processed ${processed} queued transcript(s), skipped ${skipped} empty.`,
+  );
+
+  await store.close();
+  await valkeyClient.quit();
+}
+
+// ---------------------------------------------------------------------------
 // forget (bulk delete by scope: project / branch / tags)
 // ---------------------------------------------------------------------------
 
@@ -486,17 +595,28 @@ async function runForget(argv: string[]) {
   const apply = argv.includes("--apply");
   const allProjects = argv.includes("--all-projects");
   const branch = flag("branch");
-  const tags = flag("tags")?.split(",").map((t) => t.trim()).filter(Boolean);
+  const tags = flag("tags")
+    ?.split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
 
   const { getValkeyClient } = await import("./client/valkey.js");
   const { getPluginMemoryStore } = await import("./client/memory-store.js");
   const { getCwdProject } = await import("./memory/capture.js");
 
-  const project = allProjects ? undefined : (flag("project") ?? getCwdProject());
+  const project = allProjects
+    ? undefined
+    : (flag("project") ?? getCwdProject());
 
   // Refuse an unbounded delete: --all-projects must be narrowed by branch/tags.
-  if (project === undefined && branch === undefined && (!tags || tags.length === 0)) {
-    console.error("Refusing to delete every memory. Narrow --all-projects with --branch or --tags.");
+  if (
+    project === undefined &&
+    branch === undefined &&
+    (!tags || tags.length === 0)
+  ) {
+    console.error(
+      "Refusing to delete every memory. Narrow --all-projects with --branch or --tags.",
+    );
     process.exit(1);
   }
 
@@ -504,7 +624,9 @@ async function runForget(argv: string[]) {
     project !== undefined ? `project=${project}` : "all projects",
     branch !== undefined ? `branch=${branch}` : null,
     tags && tags.length > 0 ? `tags=${tags.join(",")}` : null,
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
   console.log(`Scope: ${scopeDesc}`);
 
   const valkeyClient = await getValkeyClient();
@@ -525,7 +647,8 @@ async function runForget(argv: string[]) {
   for (const m of candidates.slice(0, 5)) {
     console.log(`  - [${m.branch}] ${m.summary.oneLineSummary.slice(0, 70)}`);
   }
-  if (candidates.length > 5) console.log(`  ... and ${candidates.length - 5} more`);
+  if (candidates.length > 5)
+    console.log(`  ... and ${candidates.length - 5} more`);
 
   if (!apply) {
     console.log("\nDry run — re-run with --apply to delete.");
@@ -553,7 +676,10 @@ async function runSetupIndex() {
   const client = await getValkeyClient();
   const modelClient = await createModelClient();
   // Record the active provider/dimension so a later provider swap is caught.
-  await client.assertEmbedDim(modelClient.embedDim, modelClient.preset.embedModel);
+  await client.assertEmbedDim(
+    modelClient.embedDim,
+    modelClient.preset.embedModel,
+  );
   const store = await getPluginMemoryStore((t) => modelClient.embed(t));
   await store.ensureIndex();
   console.log("Index ready: betterdb:mem:idx");
@@ -575,7 +701,9 @@ async function runMigrate(apply: boolean) {
 
   const valkeyClient = await getValkeyClient();
   const legacyIds = await valkeyClient.listMemoryIds();
-  console.log(`Found ${legacyIds.length} legacy memories under betterdb:memory:*`);
+  console.log(
+    `Found ${legacyIds.length} legacy memories under betterdb:memory:*`,
+  );
 
   if (legacyIds.length === 0) {
     console.log("Nothing to migrate.");
@@ -585,10 +713,16 @@ async function runMigrate(apply: boolean) {
 
   if (!apply) {
     console.log("\nDry run — re-run with --apply to migrate.");
-    console.log("Each legacy memory is re-embedded and written to betterdb:mem:*,");
+    console.log(
+      "Each legacy memory is re-embedded and written to betterdb:mem:*,",
+    );
     console.log("and knowledge entries are re-pointed to the new memory ids.");
-    console.log("The legacy index is dropped only after the new count is verified;");
-    console.log("legacy hashes are left in place for you to delete once satisfied.");
+    console.log(
+      "The legacy index is dropped only after the new count is verified;",
+    );
+    console.log(
+      "legacy hashes are left in place for you to delete once satisfied.",
+    );
     await valkeyClient.quit();
     return;
   }
@@ -622,7 +756,10 @@ async function runMigrate(apply: boolean) {
         console.log(`  Migrated ${migrated}/${legacyIds.length}...`);
       }
     } catch (err) {
-      console.error(`  Failed to migrate ${id}:`, err instanceof Error ? err.message : String(err));
+      console.error(
+        `  Failed to migrate ${id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
       failed++;
     }
   }
@@ -633,15 +770,22 @@ async function runMigrate(apply: boolean) {
   let remappedKnowledge = 0;
   for (const project of projects) {
     for (const entry of await valkeyClient.listKnowledge(project)) {
-      const remapped = entry.sourceMemoryIds.map((sid) => idMap.get(sid) ?? sid);
+      const remapped = entry.sourceMemoryIds.map(
+        (sid) => idMap.get(sid) ?? sid,
+      );
       if (remapped.some((sid, i) => sid !== entry.sourceMemoryIds[i])) {
-        await valkeyClient.storeKnowledge({ ...entry, sourceMemoryIds: remapped });
+        await valkeyClient.storeKnowledge({
+          ...entry,
+          sourceMemoryIds: remapped,
+        });
         remappedKnowledge++;
       }
     }
   }
   if (remappedKnowledge > 0) {
-    console.log(`Re-pointed ${remappedKnowledge} knowledge entries to new memory ids.`);
+    console.log(
+      `Re-pointed ${remappedKnowledge} knowledge entries to new memory ids.`,
+    );
   }
 
   // Verify before dropping the legacy index: the store must have grown by the
@@ -649,14 +793,20 @@ async function runMigrate(apply: boolean) {
   // memories would satisfy even if rows failed to copy).
   const afterCount = (await store.listMemories()).length;
   const grew = afterCount - beforeCount;
-  console.log(`\nMigrated: ${migrated}, failed: ${failed}, store grew by ${grew} (now ${afterCount}).`);
+  console.log(
+    `\nMigrated: ${migrated}, failed: ${failed}, store grew by ${grew} (now ${afterCount}).`,
+  );
 
   if (migrated > 0 && grew >= migrated) {
     await valkeyClient.dropIndex();
     console.log("Verified — dropped the legacy index (betterdb-memory-index).");
-    console.log("Legacy hashes (betterdb:memory:*) remain; delete them manually when ready.");
+    console.log(
+      "Legacy hashes (betterdb:memory:*) remain; delete them manually when ready.",
+    );
   } else {
-    console.log("Count mismatch — left the legacy index in place. Re-run after investigating.");
+    console.log(
+      "Count mismatch — left the legacy index in place. Re-run after investigating.",
+    );
   }
 
   await store.close();
@@ -668,7 +818,9 @@ async function runMigrate(apply: boolean) {
 // ---------------------------------------------------------------------------
 
 async function runIngestClaudeMd(pathArg?: string) {
-  console.log("BetterDB Memory for Claude Code — Ingest markdown memory file\n");
+  console.log(
+    "BetterDB Memory for Claude Code — Ingest markdown memory file\n",
+  );
 
   const candidates = pathArg
     ? [pathArg]
@@ -680,7 +832,9 @@ async function runIngestClaudeMd(pathArg?: string) {
 
   const filePath = candidates.find((p) => existsSync(p));
   if (!filePath) {
-    console.error(`No memory file found. Looked in:\n  ${candidates.join("\n  ")}`);
+    console.error(
+      `No memory file found. Looked in:\n  ${candidates.join("\n  ")}`,
+    );
     process.exit(1);
   }
   console.log(`Reading ${filePath}`);
@@ -737,7 +891,9 @@ async function runIngestClaudeMd(pathArg?: string) {
     stored++;
   }
 
-  console.log(`\nIngested ${stored} chunks from ${filePath} into project "${project}".`);
+  console.log(
+    `\nIngested ${stored} chunks from ${filePath} into project "${project}".`,
+  );
   await store.close();
   await valkeyClient.quit();
 }

@@ -6,7 +6,7 @@ import {
   KnowledgeEntrySchema,
   HookPayloadSchema,
   SessionStartPayload,
-  StopPayload,
+  SessionEndPayload,
   PreToolUsePayload,
   PostToolUsePayload,
 } from "../../src/memory/schema.js";
@@ -98,7 +98,9 @@ describe("SessionSummarySchema", () => {
   test("accepts an optional quote on decisions and problemsSolved", () => {
     const result = SessionSummarySchema.parse({
       decisions: [{ text: "d", status: "proposed", quote: "we could do d" }],
-      problemsSolved: [{ problem: "p", resolution: "r", quote: "fixed p via r" }],
+      problemsSolved: [
+        { problem: "p", resolution: "r", quote: "fixed p via r" },
+      ],
     });
     expect(result.decisions[0]?.quote).toBe("we could do d");
     expect(result.problemsSolved[0]?.quote).toBe("fixed p via r");
@@ -206,12 +208,32 @@ describe("HookPayloadSchema (discriminated union)", () => {
     expect(result.hook_event_name).toBe("SessionStart");
   });
 
-  test("parses Stop payload", () => {
+  test("parses SessionEnd payload", () => {
     const result = HookPayloadSchema.parse({
       session_id: "s1",
-      hook_event_name: "Stop",
+      hook_event_name: "SessionEnd",
     });
-    expect(result.hook_event_name).toBe("Stop");
+    expect(result.hook_event_name).toBe("SessionEnd");
+  });
+
+  // Fixture captured from a live Claude Code SessionEnd hook (2026-07-16),
+  // not written from the docs — the hooks reference does not publish this
+  // schema, and transcript_path is load-bearing for capture.
+  test("parses a real SessionEnd payload including transcript_path and reason", () => {
+    const result = HookPayloadSchema.parse({
+      session_id: "9b5287df-f9b2-44b8-9c3d-422be5a26a46",
+      transcript_path:
+        "/Users/pd/.claude/projects/-tmp-hooktest/9b5287df-f9b2-44b8-9c3d-422be5a26a46.jsonl",
+      cwd: "/tmp/hooktest",
+      prompt_id: "ae39b092-f563-4787-a786-6254d0acb3fb",
+      hook_event_name: "SessionEnd",
+      reason: "other",
+    });
+    expect(result.hook_event_name).toBe("SessionEnd");
+    expect(result.transcript_path).toContain(".jsonl");
+    if (result.hook_event_name === "SessionEnd") {
+      expect(result.reason).toBe("other");
+    }
   });
 
   test("parses PreToolUse payload", () => {

@@ -63,7 +63,7 @@ const hooks = {
   SessionStart: [{ hooks: [{ type: 'command', command: wrap('session-start') }] }],
   PreToolUse:   [{ matcher: '', hooks: [{ type: 'command', command: wrap('pre-tool') }] }],
   PostToolUse:  [{ matcher: '', hooks: [{ type: 'command', command: wrap('post-tool') }] }],
-  Stop:         [{ hooks: [{ type: 'command', command: wrap('session-end') }] }],
+  SessionEnd:   [{ hooks: [{ type: 'command', command: wrap('session-end') }] }],
 };
 fs.writeFileSync(settingsPath, JSON.stringify({ ...existing, hooks }, null, 2));
 console.log('Hook configuration written to: ' + settingsPath);
@@ -91,7 +91,7 @@ echo "=== Installation Complete ==="
 echo ""
 echo "Hooks written to: ~/.claude/settings.json"
 echo "  SessionStart  → $DIST_DIR/session-start"
-echo "  Stop          → $DIST_DIR/session-end"
+echo "  SessionEnd    → $DIST_DIR/session-end"
 echo "  PreToolUse    → $DIST_DIR/pre-tool"
 echo "  PostToolUse   → $DIST_DIR/post-tool"
 echo ""

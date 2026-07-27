@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import Redis from "iovalkey";
 import type { EmbedFn } from "@betterdb/agent-memory";
-import { PluginMemoryStore } from "../../src/client/memory-store.js";
+import { PluginMemoryStore, buildEmbedText } from "../../src/client/memory-store.js";
 import { config } from "../../src/config.js";
 import type { EpisodicMemory } from "../../src/memory/schema.js";
 
@@ -10,8 +10,10 @@ const SKIP = Bun.env.BETTERDB_SKIP_INTEGRATION === "true";
 const EMBED_DIM = 16;
 
 // Deterministic, provider-free embedding: same text always yields the same
-// vector, so a memory stored from its oneLineSummary is found by re-embedding
-// that summary. Cosine distance is scale-invariant, so no normalization needed.
+// vector, so a memory is found by re-embedding the exact text storeMemory
+// embedded (buildEmbedText). A real model places the one-liner and the full
+// summary close together; this charcode hash does not, so recall must embed
+// the same text. Cosine distance is scale-invariant, so no normalization needed.
 const fakeEmbed: EmbedFn = async (text: string) => {
   const v = Array.from({ length: EMBED_DIM }, () => 0);
   for (let i = 0; i < text.length; i++) {
@@ -47,7 +49,7 @@ describe.skipIf(SKIP)("PluginMemoryStore integration", () => {
   });
 
   const recallVector = (memory: EpisodicMemory) =>
-    fakeEmbed(memory.summary.oneLineSummary);
+    fakeEmbed(buildEmbedText(memory));
 
   beforeAll(async () => {
     redis = new Redis(config.valkey.url, { lazyConnect: true });

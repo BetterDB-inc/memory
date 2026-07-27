@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { stripLegacyBetterdbHooks } from "../src/hook-migration.js";
 
 const pluginRoot = process.argv[2];
 if (!pluginRoot) {
@@ -23,7 +24,12 @@ const resolvedRoot = resolve(pluginRoot);
 const hooksDir = join(resolvedRoot, "src", "hooks");
 
 // Verify hook source files exist
-const hookFiles = ["session-start.ts", "pre-tool.ts", "post-tool.ts", "session-end.ts"];
+const hookFiles = [
+  "session-start.ts",
+  "pre-tool.ts",
+  "post-tool.ts",
+  "session-end.ts",
+];
 for (const file of hookFiles) {
   if (!existsSync(join(hooksDir, file))) {
     console.error(`ERROR: Hook source not found: ${join(hooksDir, file)}`);
@@ -45,7 +51,9 @@ if (existsSync(settingsPath)) {
     settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
   } catch {
     // Corrupted file — start fresh but warn
-    console.warn("WARNING: Could not parse ~/.claude/settings.json — existing content will be preserved as backup.");
+    console.warn(
+      "WARNING: Could not parse ~/.claude/settings.json — existing content will be preserved as backup.",
+    );
     const backupPath = settingsPath + ".bak";
     writeFileSync(backupPath, readFileSync(settingsPath));
     console.warn(`  Backup saved to ${backupPath}`);
@@ -56,8 +64,13 @@ function cmd(hookFile: string): string {
   return `bash -c 'bun run "${join(hooksDir, hookFile)}"'`;
 }
 
-// Merge hooks — replaces BetterDB entries per event, preserves all others
-const existingHooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
+// Merge hooks — replaces BetterDB entries per event, preserves all others.
+// The loop below only visits events in betterdbHooks, so the legacy Stop
+// registration must be stripped explicitly or it survives forever.
+const existingHooks = stripLegacyBetterdbHooks(
+  (settings["hooks"] ?? {}) as Record<string, unknown[]>,
+  ["betterdb", hooksDir],
+);
 const betterdbHooks: Record<string, unknown[]> = {
   SessionStart: [
     { hooks: [{ type: "command", command: cmd("session-start.ts") }] },
@@ -68,7 +81,7 @@ const betterdbHooks: Record<string, unknown[]> = {
   PostToolUse: [
     { matcher: "", hooks: [{ type: "command", command: cmd("post-tool.ts") }] },
   ],
-  Stop: [
+  SessionEnd: [
     { hooks: [{ type: "command", command: cmd("session-end.ts") }] },
   ],
 };
@@ -89,6 +102,6 @@ console.log("BetterDB Memory — Hooks registered in ~/.claude/settings.json\n")
 console.log("  SessionStart → session-start.ts");
 console.log("  PreToolUse   → pre-tool.ts");
 console.log("  PostToolUse  → post-tool.ts");
-console.log("  Stop         → session-end.ts");
+console.log("  SessionEnd   → session-end.ts");
 console.log(`\n  Plugin root: ${resolvedRoot}`);
 console.log("\n  Restart Claude Code for hooks to take effect.");
