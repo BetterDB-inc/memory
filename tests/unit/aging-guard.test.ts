@@ -37,6 +37,14 @@ function fakeModel(summary: SessionSummary) {
   };
 }
 
+function failingModel() {
+  return {
+    summarize: async () => {
+      throw new Error("summarizer unavailable");
+    },
+  };
+}
+
 describe("processIngestQueue empty-summary guard", () => {
   test("does not store a husk", async () => {
     const husk = SessionSummarySchema.parse({});
@@ -85,5 +93,118 @@ describe("processIngestQueue empty-summary guard", () => {
     expect(stored.length).toBe(1);
     expect(result.processed).toBe(1);
     expect(result.skipped).toBe(0);
+  });
+});
+
+function countedValkey(items: Array<{ transcript: string; meta: object }>) {
+  const requeued: string[] = [];
+  let pops = 0;
+  return {
+    client: {
+      popIngestQueue: async (count: number) => {
+        pops++;
+        return items.splice(0, count);
+      },
+      pushIngestQueue: async (t: string) => {
+        requeued.push(t);
+      },
+    },
+    requeued,
+    pops: () => pops,
+  };
+}
+
+describe("drainIngestQueue", () => {
+  test("drains the whole queue across multiple pops", async () => {
+    // A checkpointing session can enqueue more segments than one pop cap;
+    // the drainer is detached and unclocked, so it keeps going until dry.
+    const real = SessionSummarySchema.parse({ oneLineSummary: "Did a thing" });
+    const items = Array.from({ length: 45 }, (_, i) => ({
+      transcript: `segment ${i}`,
+      meta: {},
+    }));
+    const stored: SessionSummary[] = [];
+    const vk = countedValkey(items);
+
+    const pipeline = new AgingPipeline(
+      vk.client as never,
+      fakeStore(stored) as never,
+      fakeModel(real) as never,
+    );
+    const result = await pipeline.drainIngestQueue();
+
+    expect(result.processed).toBe(45);
+    expect(stored.length).toBe(45);
+    expect(vk.pops()).toBeGreaterThan(2);
+  });
+
+  test("stops after a failing round instead of spinning on a dead summarizer", async () => {
+    const items = Array.from({ length: 25 }, (_, i) => ({
+      transcript: `segment ${i}`,
+      meta: {},
+    }));
+    const vk = countedValkey(items);
+
+    const pipeline = new AgingPipeline(
+      vk.client as never,
+      fakeStore([]) as never,
+      failingModel() as never,
+    );
+    const result = await pipeline.drainIngestQueue();
+
+    expect(result.processed).toBe(0);
+    expect(vk.pops()).toBe(1);
+    expect(vk.requeued.length).toBe(20);
+  });
+});
+
+describe("processIngestQueue failure handling", () => {
+  test("re-queues the failed item and every remaining popped item", async () => {
+    // The pop is destructive: anything popped but neither stored nor
+    // re-queued is lost forever when the drain process exits.
+    const vk = fakeValkey([
+      { transcript: "first", meta: {} },
+      { transcript: "second", meta: {} },
+      { transcript: "third", meta: {} },
+    ]);
+
+    const pipeline = new AgingPipeline(
+      vk.client as never,
+      fakeStore([]) as never,
+      failingModel() as never,
+    );
+    const result = await pipeline.processIngestQueue();
+
+    expect(result.processed).toBe(0);
+    expect(vk.requeued.sort()).toEqual(["first", "second", "third"]);
+  });
+
+  test("re-queues only the unprocessed tail when a later item fails", async () => {
+    const real = SessionSummarySchema.parse({ oneLineSummary: "Did a thing" });
+    let calls = 0;
+    const flaky = {
+      summarize: async () => {
+        calls++;
+        if (calls > 1) throw new Error("summarizer died mid-batch");
+        return real;
+      },
+    };
+    const stored: SessionSummary[] = [];
+    const vk = fakeValkey([
+      { transcript: "first", meta: {} },
+      { transcript: "second", meta: {} },
+      { transcript: "third", meta: {} },
+    ]);
+
+    const pipeline = new AgingPipeline(
+      vk.client as never,
+      fakeStore(stored) as never,
+      flaky as never,
+    );
+    const result = await pipeline.processIngestQueue();
+
+    expect(result.processed).toBe(1);
+    expect(stored.length).toBe(1);
+    expect(vk.requeued.sort()).toEqual(["second", "third"]);
   });
 });

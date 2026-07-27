@@ -4,5 +4,6 @@ dist/
 .betterdb_context.md
 .mcp.json
 *.log
+*.bun-build
 bun.lockb
 .idea/

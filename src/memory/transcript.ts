@@ -93,3 +93,68 @@ export function selectTranscript(
   if (prev < turns.length - 1) out.push(GAP_MARKER);
   return out.join("\n");
 }
+
+interface RawTranscriptEntry {
+  type?: string;
+  message?: { content?: unknown };
+  tool_name?: string;
+  name?: string;
+}
+
+function extractContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter((b): b is { type: string; text: string } => {
+        return (
+          typeof b === "object" &&
+          b !== null &&
+          (b as { type?: unknown }).type === "text" &&
+          typeof (b as { text?: unknown }).text === "string"
+        );
+      })
+      .map((b) => b.text)
+      .join("\n");
+  }
+  return "";
+}
+
+export function parseTranscriptLine(line: string): TranscriptTurn[] {
+  let entry: RawTranscriptEntry;
+  try {
+    entry = JSON.parse(line) as RawTranscriptEntry;
+  } catch {
+    return [];
+  }
+
+  if (entry.type === "user" && entry.message?.content !== undefined) {
+    const content = extractContent(entry.message.content);
+    if (
+      content &&
+      !content.includes("<local-command") &&
+      !content.includes("<command-name>")
+    ) {
+      return [{ role: "user", text: `User: ${content}` }];
+    }
+    return [];
+  }
+
+  if (entry.type === "assistant" && entry.message?.content !== undefined) {
+    const content = extractContent(entry.message.content);
+    if (content) {
+      return [{ role: "assistant", text: `Assistant: ${content.slice(0, 2000)}` }];
+    }
+    return [];
+  }
+
+  if (entry.type === "tool_use" || entry.type === "tool_result") {
+    const toolName = entry.tool_name ?? entry.name ?? "";
+    if (toolName) {
+      return [{ role: "tool", text: `Tool: ${toolName}` }];
+    }
+  }
+
+  return [];
+}

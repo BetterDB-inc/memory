@@ -6,10 +6,19 @@ import {
   getCwdProject,
 } from "../memory/capture.js";
 import { SessionEventSchema } from "../memory/schema.js";
-import { selectTranscript, type TranscriptTurn } from "../memory/transcript.js";
+import {
+  CHECKPOINT_THRESHOLD,
+  parseTurnsFrom,
+  planTailSegments,
+  readCheckpoint,
+  removeCheckpoint,
+  type OffsetTurn,
+} from "../memory/checkpoint.js";
 import { config, isConfigured } from "../config.js";
+import { flushSegments } from "./flush-segments.js";
+import { locateDrainCommand } from "./locate-drain.js";
 import { unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * SessionEnd hook: captures the session transcript and queues it.
@@ -39,17 +48,20 @@ runHook(async () => {
   }
 
   const eventFilePath = `/tmp/betterdb-${sessionId}.jsonl`;
-  let turns: TranscriptTurn[] = [];
+  const checkpoint = await readCheckpoint(sessionId);
+  let turns: OffsetTurn[] = [];
 
-  // Prefer transcript_path — contains the full conversation including user messages
   if (transcriptPath) {
-    turns = await parseTranscriptTurns(transcriptPath);
+    turns = await parseTurnsFrom(transcriptPath, checkpoint.byteOffset);
   }
 
-  // Fall back to JSONL event file (tool calls captured by PostToolUse hook).
-  // Event lines rank as tool turns; with no user turns present the selector
-  // keeps them, so a tool-only fallback transcript is never emptied.
-  if (turns.length === 0) {
+  // Fall back to JSONL event file (tool calls captured by PostToolUse hook)
+  // only when no checkpoint ever ran. Event lines rank as tool turns; with no
+  // user turns present the selector keeps them, so a tool-only fallback
+  // transcript is never emptied. After a checkpoint an empty tail means the
+  // transcript is already fully queued, and the event file covers the whole
+  // session — re-queueing it would duplicate earlier segments.
+  if (turns.length === 0 && checkpoint.segment === 0) {
     const eventFile = Bun.file(eventFilePath);
     if (await eventFile.exists()) {
       const raw = await eventFile.text();
@@ -66,19 +78,29 @@ runHook(async () => {
         .buildTranscript()
         .split("\n")
         .filter(Boolean)
-        .map((text) => ({ role: "tool" as const, text }));
+        .map((text) => ({ role: "tool" as const, text, endByte: 0 }));
     }
   }
 
-  // Cap to ~8K chars for the summarizer via priority-based selection (user
-  // turns > assistant turns near user turns > tool lines) instead of the old
-  // head+tail slice, which dropped the middle of long sessions wholesale.
+  // Chunk the tail the way Stop does rather than capping it once: a session
+  // whose Stop hook never checkpointed arrives here whole, and a single cap
+  // would discard everything past it. Only the sub-threshold remainder is
+  // selected down.
   const MAX_TRANSCRIPT = 8000;
-  const transcript = selectTranscript(turns, MAX_TRANSCRIPT);
+  const segments = planTailSegments(
+    turns,
+    CHECKPOINT_THRESHOLD,
+    MAX_TRANSCRIPT,
+  ).filter((text) => text.length >= 20);
 
-  // Nothing to store
-  if (!transcript || transcript.length < 20) {
-    await cleanup(eventFilePath);
+  // Nothing new to store. The Stop hook may still have queued segments this
+  // session, and it never spawns a drainer — so returning here without one
+  // would leave them unsummarized until some later session happened to drain.
+  if (segments.length === 0) {
+    if (checkpoint.segment > 0) {
+      await spawnDrain();
+    }
+    await cleanup(eventFilePath, sessionId);
     return;
   }
 
@@ -86,129 +108,59 @@ runHook(async () => {
   try {
     valkeyClient = await getValkeyClient();
   } catch {
-    await cleanup(eventFilePath);
+    await cleanup(eventFilePath, sessionId);
     return; // Valkey unreachable — skip silently
   }
 
-  const project = getCwdProject();
-  const branch = getGitBranch();
-
-  await valkeyClient.pushIngestQueue(transcript, {
-    project,
-    branch,
-    timestamp: new Date().toISOString(),
+  const { pushed } = await flushSegments(valkeyClient, segments, {
+    project: getCwdProject(),
+    branch: getGitBranch(),
     sessionId,
+    baseSegment: checkpoint.segment,
   });
 
-  await spawnDrain();
+  // Drain even after a partial flush: the Stop hook's segments and whatever
+  // was pushed before the failure are already queued and nothing else will
+  // summarize them this session.
+  if (pushed > 0 || checkpoint.segment > 0) {
+    await spawnDrain();
+  }
 
-  await valkeyClient.quit();
-  await cleanup(eventFilePath);
+  await valkeyClient.quit().catch(() => {});
+  await cleanup(eventFilePath, sessionId);
 });
 
 /**
  * Spawn the detached drainer. unref() releases it from this process's event
  * loop, so the hook exits immediately while summarization continues.
- *
- * Both install shapes must work: `install` compiles binaries into
- * ~/.betterdb/bin, while register-hooks.ts registers `bun run <src>` and
- * compiles nothing. Resolving only the compiled path left that second shape
- * with no drainer at all — and the exists() guard made it silent.
  */
 async function spawnDrain(): Promise<void> {
   // HOME is unset on Windows, where install and config both fall back to
   // USERPROFILE.
   const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? "";
-  const drainBin = join(home, ".betterdb", "bin", "drain");
-  if (await Bun.file(drainBin).exists()) {
-    Bun.spawn([drainBin], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    }).unref();
+  const cmd = await locateDrainCommand({
+    execDir: dirname(process.execPath),
+    installBinDir: join(home, ".betterdb", "bin"),
+    sourceDir: import.meta.dir,
+  });
+  if (!cmd) {
+    console.error(
+      "[betterdb] no drain binary or source found — queued transcripts stay queued until `betterdb-memory drain` runs",
+    );
     return;
   }
-
-  const drainSrc = join(import.meta.dir, "drain.ts");
-  if (await Bun.file(drainSrc).exists()) {
-    Bun.spawn(["bun", "run", drainSrc], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    }).unref();
-    return;
-  }
-
-  console.error(
-    "[betterdb] no drain binary or source found — queued transcripts stay queued until `betterdb-memory drain` runs",
-  );
+  Bun.spawn(cmd, {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  }).unref();
 }
 
-/**
- * Parse Claude Code's transcript JSONL into role-tagged turns.
- * The JSONL contains objects with type: "user" | "assistant" and message content.
- * We extract user/assistant/tool turns so selectTranscript can rank them.
- */
-async function parseTranscriptTurns(path: string): Promise<TranscriptTurn[]> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return [];
-
-  const raw = await file.text();
-  const turns: TranscriptTurn[] = [];
-
-  for (const line of raw.split("\n").filter(Boolean)) {
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type === "user" && entry.message?.content) {
-        const content =
-          typeof entry.message.content === "string"
-            ? entry.message.content
-            : Array.isArray(entry.message.content)
-              ? entry.message.content
-                  .filter((b: { type: string }) => b.type === "text")
-                  .map((b: { text: string }) => b.text)
-                  .join("\n")
-              : "";
-        // Skip system-generated messages (commands, caveats)
-        if (
-          content &&
-          !content.includes("<local-command") &&
-          !content.includes("<command-name>")
-        ) {
-          turns.push({ role: "user", text: `User: ${content}` });
-        }
-      } else if (entry.type === "assistant" && entry.message?.content) {
-        const content =
-          typeof entry.message.content === "string"
-            ? entry.message.content
-            : Array.isArray(entry.message.content)
-              ? entry.message.content
-                  .filter((b: { type: string }) => b.type === "text")
-                  .map((b: { text: string }) => b.text)
-                  .join("\n")
-              : "";
-        if (content) {
-          turns.push({
-            role: "assistant",
-            text: `Assistant: ${content.slice(0, 2000)}`,
-          });
-        }
-      } else if (entry.type === "tool_use" || entry.type === "tool_result") {
-        // Include tool names for context but keep it brief
-        const toolName = entry.tool_name ?? entry.name ?? "";
-        if (toolName) {
-          turns.push({ role: "tool", text: `Tool: ${toolName}` });
-        }
-      }
-    } catch {
-      // Skip malformed lines
-    }
-  }
-
-  return turns;
-}
-
-async function cleanup(eventFilePath: string): Promise<void> {
+async function cleanup(
+  eventFilePath: string,
+  sessionId: string,
+): Promise<void> {
+  await removeCheckpoint(sessionId);
   try {
     await unlink(eventFilePath);
   } catch {

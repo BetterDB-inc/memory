@@ -42,7 +42,8 @@ if [ ! -f "$GLOBAL_SETTINGS" ]; then
   echo '{}' > "$GLOBAL_SETTINGS"
 fi
 
-# Merge hooks into existing settings using Bun (preserves other fields, overwrites hooks block)
+# Merge hooks into existing settings using Bun — replaces our own entries per
+# event and preserves every other field, including third-party hooks
 # Each hook command sources the .env file first so compiled binaries get the right env vars
 # (bun build --compile binaries don't auto-load .env like `bun run` does)
 DIST_DIR="$PROJECT_DIR/dist/hooks"
@@ -50,6 +51,7 @@ ENV_FILE="$PROJECT_DIR/.env"
 
 bun -e "
 const fs = require('fs');
+const { buildHookMap, isOwnHookEntry } = require('$PROJECT_DIR/src/hook-spec.ts');
 const settingsPath = '$GLOBAL_SETTINGS';
 const envFile = '$ENV_FILE';
 const distDir = '$DIST_DIR';
@@ -59,12 +61,12 @@ const existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 const wrap = (bin) =>
   'bash -c ' + JSON.stringify('set -a; [ -f ' + envFile + ' ] && . ' + envFile + '; set +a; ' + distDir + '/' + bin);
 
-const hooks = {
-  SessionStart: [{ hooks: [{ type: 'command', command: wrap('session-start') }] }],
-  PreToolUse:   [{ matcher: '', hooks: [{ type: 'command', command: wrap('pre-tool') }] }],
-  PostToolUse:  [{ matcher: '', hooks: [{ type: 'command', command: wrap('post-tool') }] }],
-  SessionEnd:   [{ hooks: [{ type: 'command', command: wrap('session-end') }] }],
-};
+const hooks = { ...(existing.hooks || {}) };
+for (const [event, entries] of Object.entries(buildHookMap((spec) => wrap(spec.binary)))) {
+  const prev = Array.isArray(hooks[event]) ? hooks[event] : [];
+  const kept = prev.filter((entry) => !isOwnHookEntry(entry, [distDir, 'betterdb']));
+  hooks[event] = [...kept, ...entries];
+}
 fs.writeFileSync(settingsPath, JSON.stringify({ ...existing, hooks }, null, 2));
 console.log('Hook configuration written to: ' + settingsPath);
 "
@@ -80,9 +82,17 @@ echo ""
 echo "Verifying global settings..."
 bun -e "
 const fs = require('fs');
+const { HOOK_SPECS } = require('$PROJECT_DIR/src/hook-spec.ts');
 const settings = JSON.parse(fs.readFileSync('$HOME/.claude/settings.json', 'utf8'));
-const hookCount = Object.keys(settings.hooks || {}).length;
-console.log('Hooks registered: ' + hookCount + ' lifecycle events');
+const missing = HOOK_SPECS.filter((spec) => {
+  const entries = (settings.hooks || {})[spec.event] || [];
+  return !JSON.stringify(entries).includes(spec.binary);
+});
+console.log('Hooks registered: ' + (HOOK_SPECS.length - missing.length) + '/' + HOOK_SPECS.length + ' lifecycle events');
+if (missing.length > 0) {
+  console.error('ERROR: not registered: ' + missing.map((spec) => spec.event).join(', '));
+  process.exit(1);
+}
 "
 
 # Summary
@@ -90,10 +100,13 @@ echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "Hooks written to: ~/.claude/settings.json"
-echo "  SessionStart  → $DIST_DIR/session-start"
-echo "  SessionEnd    → $DIST_DIR/session-end"
-echo "  PreToolUse    → $DIST_DIR/pre-tool"
-echo "  PostToolUse   → $DIST_DIR/post-tool"
+bun -e "
+const { formatHookSummary } = require('$PROJECT_DIR/src/hook-spec.ts');
+const distDir = '$DIST_DIR';
+for (const line of formatHookSummary((spec) => distDir + '/' + spec.binary)) {
+  console.log(line);
+}
+"
 echo ""
 echo "MCP server: betterdb-memory (stdio)"
 echo ""

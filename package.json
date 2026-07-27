@@ -38,6 +38,7 @@
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
+    "build:hooks": "bun run scripts/build-hooks.ts",
     "validate": "bash scripts/validate-pack.sh",
     "prepublishOnly": "bash scripts/validate-pack.sh",
     "setup-index": "bun run scripts/setup-index.ts",
