@@ -554,7 +554,7 @@ async function runDrain() {
   const store = await getPluginMemoryStore((t) => modelClient.embed(t));
   const pipeline = new AgingPipeline(valkeyClient, store, modelClient);
 
-  const { processed, skipped } = await pipeline.processIngestQueue();
+  const { processed, skipped } = await pipeline.drainIngestQueue();
   console.log(
     `Processed ${processed} queued transcript(s), skipped ${skipped} empty.`,
   );
