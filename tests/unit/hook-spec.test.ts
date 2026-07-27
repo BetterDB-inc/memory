@@ -25,6 +25,31 @@ describe("isOwnHookEntry", () => {
     expect(isOwnHookEntry(legacy, [BIN_DIR, "betterdb"])).toBe(true);
   });
 
+  test("recognizes a compiled binary entry from a foreign checkout", () => {
+    // install-hooks.sh registers dist/hooks/<binary> wrapped in a bash -c
+    // env loader — no .ts source name anywhere. A later installer passes its
+    // own markers, which need not cover the old checkout's path.
+    const bin = entry(
+      `bash -c "set -a; [ -f /work/memory/.env ] && . /work/memory/.env; set +a; /work/memory/dist/hooks/stop-checkpoint"`,
+    );
+    expect(isOwnHookEntry(bin, [BIN_DIR, "betterdb"])).toBe(true);
+  });
+
+  test("recognizes every compiled hook binary this plugin registers", () => {
+    const map = buildHookMap((spec) => `/work/memory/dist/hooks/${spec.binary}`);
+    for (const entries of Object.values(map)) {
+      for (const e of entries) {
+        expect(isOwnHookEntry(e, [BIN_DIR, "betterdb"])).toBe(true);
+      }
+    }
+  });
+
+  test("does not claim a third party binary under its own dist/hooks", () => {
+    expect(
+      isOwnHookEntry(entry("/opt/tool/dist/hooks/lint"), [BIN_DIR, "betterdb"]),
+    ).toBe(false);
+  });
+
   test("does not claim a third party's hook", () => {
     expect(isOwnHookEntry(entry("/opt/other-tool/bin/their-hook"), [BIN_DIR])).toBe(
       false,

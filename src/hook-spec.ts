@@ -83,6 +83,10 @@ export const HOOK_COUNT = HOOK_SPECS.length;
 
 const HOOK_SOURCES: readonly string[] = HOOK_SPECS.map((spec) => spec.source);
 
+const HOOK_BINARY_PATHS: readonly string[] = HOOK_SPECS.map(
+  (spec) => `dist/hooks/${spec.binary}`,
+);
+
 /**
  * Whether a hook entry already in ~/.claude/settings.json is one this plugin
  * wrote, and so may be replaced.
@@ -90,8 +94,10 @@ const HOOK_SOURCES: readonly string[] = HOOK_SPECS.map((spec) => spec.source);
  * Matching an install path alone is not enough: register-hooks.ts points hooks
  * at a checkout whose path need not contain "betterdb", so such an entry
  * survived a later install and kept firing alongside the new registration. The
- * source filenames come from HOOK_SPECS, so they identify our entries wherever
- * the checkout lives. `markers` adds the caller's own install location.
+ * source filenames and dist/hooks binary paths come from HOOK_SPECS, so they
+ * identify our entries wherever the checkout lives — install-hooks.sh
+ * registers compiled binaries that contain no source filename. `markers` adds
+ * the caller's own install location.
  *
  * Deliberately conservative — a false positive deletes a third party's hook,
  * which is worse than leaving one of ours behind.
@@ -102,6 +108,9 @@ export function isOwnHookEntry(
 ): boolean {
   const json = JSON.stringify(entry) ?? "";
   if (HOOK_SOURCES.some((source) => json.includes(source))) {
+    return true;
+  }
+  if (HOOK_BINARY_PATHS.some((path) => json.includes(path))) {
     return true;
   }
   return markers.some((marker) => marker.length > 0 && json.includes(marker));
